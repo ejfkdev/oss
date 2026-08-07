@@ -1,0 +1,6 @@
+/oss
+*.exe
+*.test
+dist/
+.DS_Store
+.mimosa/

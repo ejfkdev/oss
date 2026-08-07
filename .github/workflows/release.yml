@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build & release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      # 交叉编译：CGO 关闭、-trimpath 去本地路径、-ldflags "-s -w" 去符号表/DWARF，
+      # 并注入 tag 版本号（main.Version）。
+      - name: Build binaries
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          LDFLAGS="-s -w -X main.Version=${VERSION}"
+          mkdir -p dist
+
+          build() { # $1=GOOS $2=GOARCH $3=output suffix
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "${LDFLAGS}" -o "dist/oss$3" .
+          }
+
+          build linux   amd64 -linux-amd64
+          build linux   arm64 -linux-arm64
+          build darwin  amd64 -darwin-amd64
+          build darwin  arm64 -darwin-arm64
+          build windows amd64 -windows-amd64.exe
+
+      # UPX 压缩进一步减小体积（约 -65%）。
+      # 注意：不压缩 macOS 产物——UPX 打包的 Mach-O 会被 macOS 内核直接
+      # SIGKILL（签名/页校验问题，已在 arm64 实测确认），故仅压 Linux/Windows。
+      - name: UPX compress (linux & windows)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y upx-ucl
+          upx --best --lzma dist/oss-linux-amd64
+          upx --best --lzma dist/oss-linux-arm64
+          upx --best --lzma dist/oss-windows-amd64.exe
+          ls -lh dist/
+
+      # 打包（unix 用 tar.gz，windows 用 zip）并生成 SHA256 校验和。
+      - name: Package & checksums
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          cd dist
+          for name in oss-linux-amd64 oss-linux-arm64 oss-darwin-amd64 oss-darwin-arm64; do
+            tar -czf "oss-${VERSION}-${name#oss-}.tar.gz" "$name"
+          done
+          mv oss-windows-amd64.exe "oss-${VERSION}-windows-amd64.exe"
+          zip -q "oss-${VERSION}-windows-amd64.zip" "oss-${VERSION}-windows-amd64.exe"
+          rm -f oss-linux-* oss-darwin-* "oss-${VERSION}-windows-amd64.exe"
+          sha256sum *.tar.gz *.zip > "oss-${VERSION}-checksums.txt"
+          ls -lh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*-checksums.txt
