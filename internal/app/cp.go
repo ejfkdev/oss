@@ -19,7 +19,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
-	"oss/internal/s3x"
+	"github.com/ejfkdev/oss/internal/s3x"
 )
 
 func cpCmd() *cli.Command {

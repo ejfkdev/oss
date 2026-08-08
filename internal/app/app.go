@@ -9,7 +9,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"oss/internal/s3x"
+	"github.com/ejfkdev/oss/internal/s3x"
 )
 
 // RepoURL is the project homepage shown in help and version output.

@@ -13,7 +13,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"gopkg.in/yaml.v3"
 
-	"oss/internal/s3x"
+	"github.com/ejfkdev/oss/internal/s3x"
 )
 
 // exportRow is one row of an exported listing.

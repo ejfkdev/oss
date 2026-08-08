@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/bytedance/sonic"
 
-	"oss/internal/s3x"
+	"github.com/ejfkdev/oss/internal/s3x"
 )
 
 // Listing cache: pages already fetched from the server are cached per

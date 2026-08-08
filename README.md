@@ -29,16 +29,29 @@ Cloudflare R2、Wasabi、DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3
 
 ## 安装
 
-**方式一：下载预编译二进制**（推荐）
+**方式一：Homebrew**（macOS / Linux，推荐）
+
+```bash
+brew install ejfkdev/tap/oss
+```
+
+**方式二：go install**（需要 Go 1.24+）
+
+```bash
+go install github.com/ejfkdev/oss@latest
+```
+
+**方式三：预编译二进制**
 
 从 [GitHub Releases](https://github.com/ejfkdev/oss/releases) 下载对应平台的压缩包
 （`linux/darwin/windows × amd64/arm64`），解压即用。Release 产物已剥离符号表，
 Linux/Windows 版本经 UPX 压缩（macOS 版不压缩：UPX 打包的 Mach-O 会被内核拦截）。
 每个版本附带 `SHA256` 校验和文件。
 
-**方式二：源码编译**（需要 Go 1.24+）：
+**方式四：源码编译**（需要 Go 1.24+）：
 
 ```bash
+git clone https://github.com/ejfkdev/oss && cd oss
 make build      # 产物为 ./oss
 make install    # 安装到 $GOPATH/bin
 make release    # 本地交叉编译全部平台到 dist/
@@ -235,6 +248,7 @@ oss presign s3://b/key --method PUT         # 上传链接
 | `-H/--header` | 额外 HTTP 头，可重复：`-H "User-Agent: …" -H "Cookie: …"` |
 | `-k/--insecure` | 跳过 TLS 证书校验 |
 | `--timeout` | 单请求超时，如 `30s`（默认不限时，适合大文件流式传输） |
+| `--color` | 彩色输出 `auto\|always\|never`（auto = 仅交互式终端） |
 
 ## 大桶性能设计
 
@@ -246,6 +260,81 @@ oss presign s3://b/key --method PUT         # 上传链接
 - **分片并发**：单个大文件内部再按 `--parallel` 并发拉取分片（multipart）
 - **原子落盘**：先写 `*.part` 再 rename，中断不会留下半个文件
 - **v2 → v1 自适应**：服务端不支持 ListObjectsV2 时自动退回 marker 翻页
+
+## 命令参数手册
+
+以下为各子命令的完整参数（`oss <command> -h` 可查看同样内容）。
+
+### `oss ls` — 列出桶/对象
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--prefix <p>` | | 前缀过滤（与 URL 路径、`?prefix=` 叠加生效） |
+| `--delimiter <d>` | `/` | 目录分隔符（目录视图）；设为空串则平铺 |
+| `-r, --recursive` | | 平铺列出所有对象（不区分目录） |
+| `-d, --dirs` | | 只列目录 |
+| `-f, --files` | | 只列文件（对象） |
+| `--include <glob>` | | glob 包含过滤，可重复（匹配相对路径或文件名） |
+| `--exclude <glob>` | | glob 排除过滤，可重复 |
+| `-n, --limit <N>` | `1000` | 最多显示条数；再次运行自动从断点继续 |
+| `-a, --all` | | 列出全部（流式输出，常数内存，不使用缓存） |
+| `--page-size <N>` | `1000` | 每次 ListObjects 请求的条数 |
+| `--next-token <t>` | | 显式指定续传 token（覆盖缓存） |
+| `--reset` | | 清除该列举的缓存，重新从服务端获取 |
+| `--no-cache` | | 不读写列举缓存（实时结果，翻页需手动 `--next-token`） |
+| `--start-after <k>` | | 从指定 key 之后开始列举 |
+| `-j, --json` | | NDJSON 输出（每行一条，流式） |
+| `--bytes` | | 大小显示为字节数（默认人类可读） |
+| `--export <file>` | | 导出筛选后的文件列表；格式按扩展名 `.txt .csv .xlsx .yaml .md` |
+
+### `oss cat` — 输出对象内容
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--range <r>` | | 字节范围：`0-1023`、`bytes=0-1023`、`100-`（开区间） |
+
+### `oss stat` — 查看元数据
+
+无专属参数（对象 → 大小/etag/类型/自定义 metadata；桶 → 可达性与连接信息）。
+
+### `oss cp` — 下载 / 上传 / 跨桶拷贝
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-r, --recursive` | | 按前缀/目录递归拷贝 |
+| `--include <glob>` | | glob 包含过滤，可重复 |
+| `--exclude <glob>` | | glob 排除过滤，可重复（如 `*.tmp`） |
+| `--skip-existing` | | 目标已存在则跳过 |
+| `--jobs <N>` | `16` | 并发文件数 |
+| `--parallel <N>` | `5` | 单文件分片并发数（multipart） |
+| `--no-progress` | | 关闭进度显示 |
+
+### `oss presign` — 预签名 URL
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--expires <d>` | `15m` | 链接有效期，如 `15m`、`1h` |
+| `--method <m>` | `GET` | 签名的 HTTP 方法：`GET`（下载）\| `PUT`（上传） |
+
+### 公共连接参数（所有子命令）
+
+| 参数 | 说明 |
+|---|---|
+| `--ak <ID>` | AccessKey ID（环境变量 `OSS_ACCESS_KEY_ID` / `AWS_ACCESS_KEY_ID`） |
+| `--sk <SECRET>` | AccessKey Secret（环境变量 `OSS_SECRET_ACCESS_KEY` / `AWS_SECRET_ACCESS_KEY`） |
+| `--token <T>` | STS 会话令牌（环境变量 `OSS_SESSION_TOKEN` / `AWS_SESSION_TOKEN`） |
+| `--profile <NAME>` | AWS 共享配置 profile（`~/.aws/config`，支持 assume-role） |
+| `--anonymous` | 强制匿名访问 |
+| `--provider <P>` | 云厂商：`aws aliyun tencent huawei qiniu gcs r2 wasabi spaces b2 minio` |
+| `-e, --endpoint <URL>` | 自定义 endpoint（覆盖厂商默认值） |
+| `--region <R>` | 区域（覆盖 URL 推导值） |
+| `--path-style` | 强制 path-style 寻址（`http://host/bucket/key`） |
+| `--bucket <NAME>` | 显式指定桶名（URL 无法识别时） |
+| `-x, --proxy <URL>` | HTTP 代理，如 `http://127.0.0.1:7890` |
+| `-H, --header "K: V"` | 附加 HTTP 头，可重复（User-Agent、Cookie 等） |
+| `-k, --insecure` | 跳过 TLS 证书校验 |
+| `--timeout <d>` | 单请求超时，如 `30s`（0 = 不超时） |
+| `--color <WHEN>` | 彩色输出：`auto`（默认）\| `always` \| `never` |
 
 ## 开发
 

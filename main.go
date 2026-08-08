@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"oss/internal/app"
+	"github.com/ejfkdev/oss/internal/app"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=...".

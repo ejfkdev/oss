@@ -1,4 +1,4 @@
-module oss
+module github.com/ejfkdev/oss
 
 go 1.26.5
 

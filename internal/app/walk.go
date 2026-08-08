@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/urfave/cli/v3"
 
-	"oss/internal/s3x"
+	"github.com/ejfkdev/oss/internal/s3x"
 )
 
 // listParams are the resolved S3 listing parameters shared by the display,

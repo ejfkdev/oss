@@ -36,16 +36,29 @@ Cloudflare R2, Wasabi, DigitalOcean Spaces, Backblaze B2, MinIO and any other S3
 
 ## Installation
 
-**Option 1: prebuilt binaries** (recommended)
+**Option 1: Homebrew** (macOS / Linux, recommended)
+
+```bash
+brew install ejfkdev/tap/oss
+```
+
+**Option 2: go install** (requires Go 1.24+)
+
+```bash
+go install github.com/ejfkdev/oss@latest
+```
+
+**Option 3: prebuilt binaries**
 
 Download the archive for your platform from [GitHub Releases](https://github.com/ejfkdev/oss/releases)
 (`linux/darwin/windows × amd64/arm64`) and extract. Release binaries are stripped;
 Linux/Windows builds are UPX-compressed (macOS builds are not: UPX-packed Mach-O binaries are
 killed by the kernel). Every release ships with a `SHA256` checksum file.
 
-**Option 2: build from source** (requires Go 1.24+):
+**Option 4: build from source** (requires Go 1.24+):
 
 ```bash
+git clone https://github.com/ejfkdev/oss && cd oss
 make build      # produces ./oss
 make install    # installs into $GOPATH/bin
 make release    # cross-compiles all platforms into dist/
@@ -249,6 +262,7 @@ Supported by every subcommand:
 | `-H/--header` | extra HTTP headers, repeatable: `-H "User-Agent: …" -H "Cookie: …"` |
 | `-k/--insecure` | skip TLS certificate verification |
 | `--timeout` | per-request timeout, e.g. `30s` (default: none, suits large streaming downloads) |
+| `--color` | color output `auto\|always\|never` (auto = interactive terminals only) |
 
 ## Huge-bucket design
 
@@ -261,6 +275,81 @@ Supported by every subcommand:
 - **Atomic writes**: files are written to `*.part` then renamed — an interruption never leaves
   half-written files
 - **v2 → v1 fallback**: when the server lacks ListObjectsV2, marker-based pagination is used automatically
+
+## Command reference
+
+Complete parameters for every subcommand (also available via `oss <command> -h`).
+
+### `oss ls` — list buckets/objects
+
+| Flag | Default | Description |
+|---|---|---|
+| `--prefix <p>` | | key prefix filter (stacks with URL path / `?prefix=`) |
+| `--delimiter <d>` | `/` | delimiter for folder view; empty string = flat |
+| `-r, --recursive` | | flat listing of every key (no folders) |
+| `-d, --dirs` | | list directories only |
+| `-f, --files` | | list files (objects) only |
+| `--include <glob>` | | glob include filter, repeatable (matches relative path or base name) |
+| `--exclude <glob>` | | glob exclude filter, repeatable |
+| `-n, --limit <N>` | `1000` | max entries to display; next run auto-resumes |
+| `-a, --all` | | list everything (streaming, constant memory, no cache) |
+| `--page-size <N>` | `1000` | entries per ListObjects request |
+| `--next-token <t>` | | explicit continuation token (overrides the cache) |
+| `--reset` | | clear this listing's cache and refetch |
+| `--no-cache` | | bypass the listing cache (live results; manual `--next-token` paging) |
+| `--start-after <k>` | | start listing after this key |
+| `-j, --json` | | NDJSON output (one entry per line, streaming) |
+| `--bytes` | | raw byte sizes (default: human-readable) |
+| `--export <file>` | | export the filtered list; format by extension `.txt .csv .xlsx .yaml .md` |
+
+### `oss cat` — print object content
+
+| Flag | Default | Description |
+|---|---|---|
+| `--range <r>` | | byte range: `0-1023`, `bytes=0-1023`, `100-` (open end) |
+
+### `oss stat` — show metadata
+
+No dedicated flags (object → size/etag/type/custom metadata; bucket → reachability and connection info).
+
+### `oss cp` — download / upload / cross-bucket copy
+
+| Flag | Default | Description |
+|---|---|---|
+| `-r, --recursive` | | copy recursively by prefix/directory |
+| `--include <glob>` | | glob include filter, repeatable |
+| `--exclude <glob>` | | glob exclude filter, repeatable (e.g. `*.tmp`) |
+| `--skip-existing` | | skip files that already exist at the destination |
+| `--jobs <N>` | `16` | parallel file transfers |
+| `--parallel <N>` | `5` | parallel parts per file (multipart) |
+| `--no-progress` | | disable progress output |
+
+### `oss presign` — pre-signed URLs
+
+| Flag | Default | Description |
+|---|---|---|
+| `--expires <d>` | `15m` | URL validity, e.g. `15m`, `1h` |
+| `--method <m>` | `GET` | HTTP method to sign: `GET` (download) \| `PUT` (upload) |
+
+### Common connection flags (all subcommands)
+
+| Flag | Description |
+|---|---|
+| `--ak <ID>` | AccessKey ID (env `OSS_ACCESS_KEY_ID` / `AWS_ACCESS_KEY_ID`) |
+| `--sk <SECRET>` | AccessKey Secret (env `OSS_SECRET_ACCESS_KEY` / `AWS_SECRET_ACCESS_KEY`) |
+| `--token <T>` | STS session token (env `OSS_SESSION_TOKEN` / `AWS_SESSION_TOKEN`) |
+| `--profile <NAME>` | AWS shared config profile (`~/.aws/config`, assume-role supported) |
+| `--anonymous` | force anonymous access |
+| `--provider <P>` | storage provider: `aws aliyun tencent huawei qiniu gcs r2 wasabi spaces b2 minio` |
+| `-e, --endpoint <URL>` | custom endpoint (overrides the provider default) |
+| `--region <R>` | region (overrides the URL-derived one) |
+| `--path-style` | force path-style addressing (`http://host/bucket/key`) |
+| `--bucket <NAME>` | explicit bucket name (when the URL is ambiguous) |
+| `-x, --proxy <URL>` | HTTP proxy, e.g. `http://127.0.0.1:7890` |
+| `-H, --header "K: V"` | extra HTTP header, repeatable (User-Agent, Cookie, ...) |
+| `-k, --insecure` | skip TLS certificate verification |
+| `--timeout <d>` | per-request timeout, e.g. `30s` (0 = none) |
+| `--color <WHEN>` | color output: `auto` (default) \| `always` \| `never` |
 
 ## Development
 

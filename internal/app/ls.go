@@ -15,7 +15,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/urfave/cli/v3"
 
-	"oss/internal/s3x"
+	"github.com/ejfkdev/oss/internal/s3x"
 )
 
 func lsCmd() *cli.Command {
