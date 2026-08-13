@@ -6,8 +6,9 @@
 **中文 | [English](README.en.md)**
 
 基于 S3 协议的跨云对象存储命令行工具。一个二进制，操作主流云厂商的对象存储：
-AWS S3、阿里云 OSS、腾讯云 COS、华为云 OBS、七牛云 Kodo、Google Cloud Storage、
-Cloudflare R2、Wasabi、DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
+AWS S3、阿里云 OSS、腾讯云 COS、华为云 OBS、七牛云 Kodo、百度云 BOS、金山云 KS3、
+UCloud US3、京东云 OSS、Google Cloud Storage、Cloudflare R2、Scaleway、Wasabi、
+DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
 
 - 🌐 **匿名桶浏览**：直接给 URL 即可列出/下载公共读桶，无需任何凭证
 - 🔗 **URL 即入口**：支持 `https://...` URL 访问，识别各厂商域名并解析桶名/区域；
@@ -21,6 +22,8 @@ Cloudflare R2、Wasabi、DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3
 - 🗂 **列表缓存**：已列举内容默认缓存到本地，重复列举/导出/下载秒开（`-d` 这类需全量扫描的场景提速数百倍）
 - 📤 **导出文件列表**：按过滤条件导出为 `txt / csv / xlsx / yaml / markdown`（`--export`）
 - ⬇️ **筛选批量下载**：`cp -r` 按 `--include/--exclude/--prefix` 下载所有匹配文件，保持 key 目录结构
+- 🔍 **桶归属扫描**：`scan` 给定桶名并发探测各云存储，判断桶存在于哪个在线服务
+  （匿名探测，按响应码区分存在/私有/不存在，不要求可访问）
 - 🎨 **终端友好**：交互式终端自动彩色高亮，管道/脚本场景自动输出纯文本（`--color auto|always|never`）
 - 🌍 **中英文帮助**：自动识别系统语言，中文环境显示中文帮助，其余显示英文（可用 `OSS_LANG=zh|en` 强制）
 - 📄 **大桶优化**：流式分页列举（常数内存）、NDJSON 流式输出、有界并发下载，百万级对象不占内存
@@ -109,6 +112,11 @@ URL 自动识别的厂商域名（解析出 endpoint / region / bucket）：
 | 腾讯云 | `bucket-appid.cos.ap-guangzhou.myqcloud.com` |
 | 华为云 | `bucket.obs.cn-north-4.myhuaweicloud.com` |
 | 七牛云 | `bucket.s3-cn-east-1.qiniucs.com` |
+| 百度云 BOS | `bucket.s3.bj.bcebos.com`、`s3.bj.bcebos.com/bucket` |
+| 金山云 KS3 | `bucket.ks3-cn-beijing.ksyuncs.com` |
+| UCloud US3 | `bucket.s3-cn-sh2.ufileos.com` |
+| 京东云 OSS | `s3.cn-north-1.jdcloud-oss.com/bucket`（path-style） |
+| Scaleway | `bucket.s3.fr-par.scw.cloud` |
 | Cloudflare R2 | `bucket.<account_id>.r2.cloudflarestorage.com` |
 | GCS | `storage.googleapis.com/bucket`（HMAC 密钥） |
 
@@ -230,6 +238,20 @@ oss presign s3://b/key --expires 1h         # GET 下载链接
 oss presign s3://b/key --method PUT         # 上传链接
 ```
 
+### `oss scan` — 桶归属扫描
+
+给定桶名，并发探测各云存储，判断桶存在于哪个在线服务（匿名探测，不要求可访问，
+按响应码区分：200/3xx/401/403 = 存在，404/域名不存在 = 不存在，其余 = 无法判断）。
+
+```bash
+oss scan mybucket                     # 扫描所有厂商的常用区域
+oss scan mybucket --region cn-beijing # 只探测指定区域
+oss scan mybucket -j                  # NDJSON 输出
+```
+
+说明：各厂商只探测内置常用区域（AWS/GCS 全域）；腾讯云桶名需含 APPID 后缀；
+B2/七牛不支持匿名探测、R2 需账号 ID，不在探测范围。结果为最佳判断，未找到不代表绝对不存在。
+
 ## 全局连接参数
 
 所有子命令均支持：
@@ -239,7 +261,7 @@ oss presign s3://b/key --method PUT         # 上传链接
 | `--ak` / `--sk` / `--token` | 静态凭证 / STS session token |
 | `--profile` | AWS 共享配置 profile（支持 assume-role） |
 | `--anonymous` | 强制匿名 |
-| `--provider` | `aws\|aliyun\|tencent\|huawei\|qiniu\|gcs\|r2\|wasabi\|spaces\|b2\|minio` |
+| `--provider` | `aws\|aliyun\|tencent\|huawei\|qiniu\|baidu\|ks3\|ucloud\|jdcloud\|scaleway\|gcs\|r2\|wasabi\|spaces\|b2\|minio` |
 | `-e/--endpoint` | 自定义 endpoint（覆盖厂商默认） |
 | `--region` | 区域（覆盖 URL 推导值） |
 | `--path-style` | 强制 path-style 寻址 |
@@ -316,6 +338,14 @@ oss presign s3://b/key --method PUT         # 上传链接
 | `--expires <d>` | `15m` | 链接有效期，如 `15m`、`1h` |
 | `--method <m>` | `GET` | 签名的 HTTP 方法：`GET`（下载）\| `PUT`（上传） |
 
+### `oss scan` — 桶归属扫描
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--region <R>` | 各厂商常用区域 | 只探测指定区域（覆盖内置区域列表） |
+| `--jobs <N>` | 全部并发 | 并发探测数 |
+| `-j, --json` | | NDJSON 输出（每个厂商一行） |
+
 ### 公共连接参数（所有子命令）
 
 | 参数 | 说明 |
@@ -325,7 +355,7 @@ oss presign s3://b/key --method PUT         # 上传链接
 | `--token <T>` | STS 会话令牌（环境变量 `OSS_SESSION_TOKEN` / `AWS_SESSION_TOKEN`） |
 | `--profile <NAME>` | AWS 共享配置 profile（`~/.aws/config`，支持 assume-role） |
 | `--anonymous` | 强制匿名访问 |
-| `--provider <P>` | 云厂商：`aws aliyun tencent huawei qiniu gcs r2 wasabi spaces b2 minio` |
+| `--provider <P>` | 云厂商：`aws aliyun tencent huawei qiniu baidu ks3 ucloud jdcloud scaleway gcs r2 wasabi spaces b2 minio` |
 | `-e, --endpoint <URL>` | 自定义 endpoint（覆盖厂商默认值） |
 | `--region <R>` | 区域（覆盖 URL 推导值） |
 | `--path-style` | 强制 path-style 寻址（`http://host/bucket/key`） |

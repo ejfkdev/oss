@@ -60,13 +60,26 @@ var (
 	reGCSEndpoint    = regexp.MustCompile(`^storage\.googleapis\.com$`)
 	reGCSVHost       = regexp.MustCompile(`^(.+)\.storage\.googleapis\.com$`)
 
+	// smaller / regional providers
+	reUCloudVHost     = regexp.MustCompile(`^(.+)\.(s3-[a-z0-9-]+)\.ufileos\.com$`)
+	reJDCloudEndpoint = regexp.MustCompile(`^s3\.([a-z0-9-]+)\.jdcloud-oss\.com$`)
+	reKS3VHost        = regexp.MustCompile(`^(.+)\.(ks3-[a-z0-9-]+)\.ksyuncs\.com$`)
+	reBaiduVHost      = regexp.MustCompile(`^(.+)\.s3\.([a-z0-9-]+)\.bcebos\.com$`)
+	reBaiduEndpoint   = regexp.MustCompile(`^s3\.([a-z0-9-]+)\.bcebos\.com$`)
+	reScalewayVHost   = regexp.MustCompile(`^(.+)\.s3\.([a-z0-9-]+)\.scw\.cloud$`)
+	reScalewayEndpt   = regexp.MustCompile(`^s3\.([a-z0-9-]+)\.scw\.cloud$`)
+
 	reBucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 )
 
+// ValidBucketName reports whether name is a syntactically valid bucket name.
+func ValidBucketName(name string) bool {
+	return reBucketName.MatchString(name)
+}
+
 // IsRemote reports whether s looks like a remote object-storage reference
 // (it carries a scheme we understand).
-func IsRemote(s string) bool {
-	u, err := url.Parse(s)
+func IsRemote(s string) bool {	u, err := url.Parse(s)
 	if err != nil || u.Scheme == "" {
 		return false
 	}
@@ -217,6 +230,28 @@ func matchKnownHost(host string) (provider, endpoint, bucket, region string, ok 
 	}
 	if reGCSEndpoint.MatchString(h) {
 		return "gcs", "https://storage.googleapis.com", "", "auto", true
+	}
+	// smaller / regional providers
+	if m := reUCloudVHost.FindStringSubmatch(h); m != nil {
+		return "ucloud", "https://" + m[2] + ".ufileos.com", m[1], strings.TrimPrefix(m[2], "s3-"), true
+	}
+	if m := reJDCloudEndpoint.FindStringSubmatch(h); m != nil {
+		return "jdcloud", "https://" + h, "", m[1], true
+	}
+	if m := reKS3VHost.FindStringSubmatch(h); m != nil {
+		return "ks3", "https://" + m[2] + ".ksyuncs.com", m[1], strings.TrimPrefix(m[2], "ks3-"), true
+	}
+	if m := reBaiduVHost.FindStringSubmatch(h); m != nil {
+		return "baidu", "https://s3." + m[2] + ".bcebos.com", m[1], m[2], true
+	}
+	if m := reBaiduEndpoint.FindStringSubmatch(h); m != nil {
+		return "baidu", "https://" + h, "", m[1], true
+	}
+	if m := reScalewayVHost.FindStringSubmatch(h); m != nil {
+		return "scaleway", "https://s3." + m[2] + ".scw.cloud", m[1], m[2], true
+	}
+	if m := reScalewayEndpt.FindStringSubmatch(h); m != nil {
+		return "scaleway", "https://" + h, "", m[1], true
 	}
 	return "", "", "", "", false
 }

@@ -45,6 +45,7 @@ func New(version string) *cli.Command {
 			statCmd(),
 			cpCmd(),
 			presignCmd(),
+			scanCmd(),
 		},
 	}
 }
@@ -99,6 +100,7 @@ func printRootHelp(w io.Writer, version string) {
 		{"stat", T("查看桶或对象的元数据", "Show bucket or object metadata")},
 		{"cp", T("传输文件：下载 / 上传 / 跨桶拷贝（并行分片、过滤条件）", "Transfer files: download / upload / cross-bucket copy (parallel multipart, filters)")},
 		{"presign", T("生成对象的预签名 URL", "Generate a pre-signed URL for an object")},
+		{"scan", T("扫描桶名存在于哪些云存储服务（桶归属探测）", "Scan which cloud storage services host a bucket name")},
 	}, cCyan, "  "))
 
 	printSection(&b, T("常用示例", "EXAMPLES"), renderRows([][2]string{
@@ -112,6 +114,7 @@ func printRootHelp(w io.Writer, version string) {
 		{`oss cp ./dist s3://mybucket/release/ -r`, T("上传目录", "Upload a directory")},
 		{`oss cat s3://mybucket/config.yaml --range 0-1023`, T("查看对象片段", "View a byte range of an object")},
 		{`oss presign s3://mybucket/file.tar.gz --expires 1h`, T("生成 1 小时有效的预签名链接", "Generate a presigned URL valid for 1h")},
+		{`oss scan mybucket`, T("探测该桶名存在于哪些云存储", "Discover which cloud providers host this bucket name")},
 	}, cCyan, "  "))
 
 	printSection(&b, T("目标写法", "TARGET SYNTAX"), renderRows([][2]string{

@@ -6,8 +6,9 @@
 **[中文](README.md) | English**
 
 A cross-cloud object storage CLI based on the S3 protocol. One binary for all major providers:
-AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Qiniu Kodo, Google Cloud Storage,
-Cloudflare R2, Wasabi, DigitalOcean Spaces, Backblaze B2, MinIO and any other S3-compatible service.
+AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Qiniu Kodo, Baidu BOS, Kingsoft KS3,
+UCloud US3, JD Cloud OSS, Google Cloud Storage, Cloudflare R2, Scaleway, Wasabi,
+DigitalOcean Spaces, Backblaze B2, MinIO and any other S3-compatible service.
 
 - 🌐 **Anonymous bucket browsing**: just pass a URL to list/download public-read buckets — no credentials needed
 - 🔗 **URL as the entry point**: access via `https://...` URLs; provider domains are recognized and
@@ -24,6 +25,9 @@ Cloudflare R2, Wasabi, DigitalOcean Spaces, Backblaze B2, MinIO and any other S3
 - 📤 **Export file lists**: export filtered listings to `txt / csv / xlsx / yaml / markdown` (`--export`)
 - ⬇️ **Filtered batch download**: `cp -r` downloads everything matching
   `--include/--exclude/--prefix`, preserving the key directory structure
+- 🔍 **Bucket discovery scan**: `scan` probes all cloud providers in parallel for a given
+  bucket name and reports which online service hosts it (anonymous probes; existence is
+  inferred from response codes — accessibility is not required)
 - 🎨 **Terminal-friendly**: colored output on interactive terminals, plain text when piped
   (`--color auto|always|never`)
 - 🌍 **Bilingual help**: the system language is auto-detected — Chinese help in Chinese
@@ -116,6 +120,11 @@ Provider domains recognized automatically (endpoint / region / bucket are parsed
 | Tencent | `bucket-appid.cos.ap-guangzhou.myqcloud.com` |
 | Huawei | `bucket.obs.cn-north-4.myhuaweicloud.com` |
 | Qiniu | `bucket.s3-cn-east-1.qiniucs.com` |
+| Baidu BOS | `bucket.s3.bj.bcebos.com`, `s3.bj.bcebos.com/bucket` |
+| Kingsoft KS3 | `bucket.ks3-cn-beijing.ksyuncs.com` |
+| UCloud US3 | `bucket.s3-cn-sh2.ufileos.com` |
+| JD Cloud OSS | `s3.cn-north-1.jdcloud-oss.com/bucket` (path-style) |
+| Scaleway | `bucket.s3.fr-par.scw.cloud` |
 | Cloudflare R2 | `bucket.<account_id>.r2.cloudflarestorage.com` |
 | GCS | `storage.googleapis.com/bucket` (HMAC keys) |
 
@@ -244,6 +253,24 @@ oss presign s3://b/key --expires 1h         # GET download link
 oss presign s3://b/key --method PUT         # upload link
 ```
 
+### `oss scan` — bucket discovery
+
+Given a bucket name, probes all cloud providers in parallel and reports which
+online service hosts the bucket (anonymous probes; accessibility not required —
+existence is inferred from response codes: 200/3xx/401/403 = exists,
+404/no-such-host = not found, anything else = inconclusive).
+
+```bash
+oss scan mybucket                     # scan the default regions of all providers
+oss scan mybucket --region cn-beijing # probe only the given region
+oss scan mybucket -j                  # NDJSON output
+```
+
+Notes: only built-in common regions are probed (AWS/GCS globally); Tencent COS
+bucket names need the APPID suffix; B2/Qiniu cannot be probed anonymously and
+R2 needs an account ID, so they are excluded. Results are best-effort —
+"not found" is not a guarantee.
+
 ## Global connection flags
 
 Supported by every subcommand:
@@ -253,7 +280,7 @@ Supported by every subcommand:
 | `--ak` / `--sk` / `--token` | static credentials / STS session token |
 | `--profile` | AWS shared config profile (assume-role supported) |
 | `--anonymous` | force anonymous access |
-| `--provider` | `aws\|aliyun\|tencent\|huawei\|qiniu\|gcs\|r2\|wasabi\|spaces\|b2\|minio` |
+| `--provider` | `aws\|aliyun\|tencent\|huawei\|qiniu\|baidu\|ks3\|ucloud\|jdcloud\|scaleway\|gcs\|r2\|wasabi\|spaces\|b2\|minio` |
 | `-e/--endpoint` | custom endpoint (overrides the provider default) |
 | `--region` | region (overrides the URL-derived one) |
 | `--path-style` | force path-style addressing |
@@ -330,6 +357,14 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 |---|---|---|
 | `--expires <d>` | `15m` | URL validity, e.g. `15m`, `1h` |
 | `--method <m>` | `GET` | HTTP method to sign: `GET` (download) \| `PUT` (upload) |
+
+### `oss scan` — bucket discovery
+
+| Flag | Default | Description |
+|---|---|---|
+| `--region <R>` | built-in common regions | probe only the given region (overrides the built-in region lists) |
+| `--jobs <N>` | all at once | concurrent probes |
+| `-j, --json` | | NDJSON output (one line per provider) |
 
 ### Common connection flags (all subcommands)
 

@@ -113,7 +113,7 @@ func New(ctx context.Context, o *ConnOpts, t *Target) (*Client, error) {
 		return nil, err
 	}
 
-	hc := newHTTPClient(o)
+	hc := NewHTTPClient(o)
 	cl := s3.NewFromConfig(aws.Config{Region: region, Credentials: creds}, func(opts *s3.Options) {
 		opts.BaseEndpoint = aws.String(endpoint)
 		opts.UsePathStyle = pathStyle
@@ -201,8 +201,8 @@ func hasSharedAWSConfig() bool {
 	return false
 }
 
-// newHTTPClient builds the HTTP client with proxy / TLS / extra headers.
-func newHTTPClient(o *ConnOpts) *http.Client {
+// NewHTTPClient builds the HTTP client with proxy / TLS / extra headers.
+func NewHTTPClient(o *ConnOpts) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if o.Proxy != "" {
 		if pu, err := url.Parse(o.Proxy); err == nil {
