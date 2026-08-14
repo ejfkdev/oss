@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/ejfkdev/oss/internal/app"
@@ -17,15 +18,16 @@ import (
 
 // Version is injected at build time via -ldflags "-X main.Version=...".
 // When unset (e.g. `go install`), the module version from the binary's
-// build info is used instead.
+// build info is used instead. The leading "v" (present in git tags) is
+// normalized away; display code adds it back.
 var Version = ""
 
 func version() string {
 	if Version != "" {
-		return Version
+		return strings.TrimPrefix(Version, "v")
 	}
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+		return strings.TrimPrefix(info.Main.Version, "v")
 	}
 	return "dev"
 }

@@ -25,9 +25,9 @@ DigitalOcean Spaces, Backblaze B2, MinIO and any other S3-compatible service.
 - 📤 **Export file lists**: export filtered listings to `txt / csv / xlsx / yaml / markdown` (`--export`)
 - ⬇️ **Filtered batch download**: `cp -r` downloads everything matching
   `--include/--exclude/--prefix`, preserving the key directory structure
-- 🔍 **Bucket discovery scan**: `scan` probes all cloud providers in parallel for a given
-  bucket name and reports which online service hosts it (anonymous probes; existence is
-  inferred from response codes — accessibility is not required)
+- 🔍 **Bucket discovery**: `find` probes all cloud providers in parallel for a given
+  bucket name and reports which online service hosts it, printing the full access URLs
+  plus ready-to-run oss commands (anonymous probes; accessibility is not required)
 - 🎨 **Terminal-friendly**: colored output on interactive terminals, plain text when piped
   (`--color auto|always|never`)
 - 🌍 **Bilingual help**: the system language is auto-detected — Chinese help in Chinese
@@ -253,23 +253,36 @@ oss presign s3://b/key --expires 1h         # GET download link
 oss presign s3://b/key --method PUT         # upload link
 ```
 
-### `oss scan` — bucket discovery
+### `oss find` — bucket discovery
 
 Given a bucket name, probes all cloud providers in parallel and reports which
 online service hosts the bucket (anonymous probes; accessibility not required —
 existence is inferred from response codes: 200/3xx/401/403 = exists,
 404/no-such-host = not found, anything else = inconclusive).
+**When found, the full access URLs are printed together with ready-to-run oss commands.**
 
 ```bash
-oss scan mybucket                     # scan the default regions of all providers
-oss scan mybucket --region cn-beijing # probe only the given region
-oss scan mybucket -j                  # NDJSON output
+oss find mybucket                     # check the default regions of all providers
+oss find mybucket --region cn-beijing # probe only the given region
+oss find mybucket -j                  # NDJSON output (incl. a summary line with URLs)
+```
+
+Example output when found:
+
+```
+✓ bucket "mybucket" found on 1 service(s): AWS S3 (public)
+
+Access URLs:
+  AWS S3 (public)
+    https://mybucket.s3.amazonaws.com/
+    → ready to use: oss ls "https://mybucket.s3.amazonaws.com/?delimiter=/"
 ```
 
 Notes: only built-in common regions are probed (AWS/GCS globally); Tencent COS
 bucket names need the APPID suffix; B2/Qiniu cannot be probed anonymously and
 R2 needs an account ID, so they are excluded. Results are best-effort —
-"not found" is not a guarantee.
+"not found" is not a guarantee. Alias: `which` (a bucket security-check command
+is planned under the `scan`/`audit` name).
 
 ## Global connection flags
 
@@ -358,13 +371,13 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 | `--expires <d>` | `15m` | URL validity, e.g. `15m`, `1h` |
 | `--method <m>` | `GET` | HTTP method to sign: `GET` (download) \| `PUT` (upload) |
 
-### `oss scan` — bucket discovery
+### `oss find` — bucket discovery
 
 | Flag | Default | Description |
 |---|---|---|
 | `--region <R>` | built-in common regions | probe only the given region (overrides the built-in region lists) |
 | `--jobs <N>` | all at once | concurrent probes |
-| `-j, --json` | | NDJSON output (one line per provider) |
+| `-j, --json` | | NDJSON output (one line per provider + a summary line with access URLs) |
 
 ### Common connection flags (all subcommands)
 

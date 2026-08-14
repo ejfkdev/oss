@@ -19,7 +19,11 @@ const RepoURL = "https://github.com/ejfkdev/oss"
 func New(version string) *cli.Command {
 	// `oss --version`
 	cli.VersionPrinter = func(cmd *cli.Command) {
-		fmt.Printf("oss %s\n%s\n", cmd.Version, RepoURL)
+		v := cmd.Version
+		if v != "dev" {
+			v = "v" + v
+		}
+		fmt.Printf("oss %s\n%s\n", v, RepoURL)
 	}
 	// Root help uses a custom, dns-style rendered layout (bilingual);
 	// subcommands keep the framework template with bilingual texts.
@@ -45,7 +49,7 @@ func New(version string) *cli.Command {
 			statCmd(),
 			cpCmd(),
 			presignCmd(),
-			scanCmd(),
+			findCmd(),
 		},
 	}
 }
@@ -85,8 +89,12 @@ func printSection(b *strings.Builder, title string, lines []string) {
 func printRootHelp(w io.Writer, version string) {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "%s v%s — %s\n",
-		cBold("oss"), version,
+	v := version
+	if v != "dev" {
+		v = "v" + v
+	}
+	fmt.Fprintf(&b, "%s %s — %s\n",
+		cBold("oss"), v,
 		T("S3 协议跨云对象存储命令行工具（AWS / 阿里云 / 腾讯云 / 华为云 / 七牛 / GCS / R2 / MinIO …）",
 			"S3-compatible object storage CLI (AWS / Aliyun / Tencent / Huawei / Qiniu / GCS / R2 / MinIO ...)"))
 	fmt.Fprintf(&b, "%s: %s\n", T("仓库", "Repo"), RepoURL)
@@ -100,7 +108,7 @@ func printRootHelp(w io.Writer, version string) {
 		{"stat", T("查看桶或对象的元数据", "Show bucket or object metadata")},
 		{"cp", T("传输文件：下载 / 上传 / 跨桶拷贝（并行分片、过滤条件）", "Transfer files: download / upload / cross-bucket copy (parallel multipart, filters)")},
 		{"presign", T("生成对象的预签名 URL", "Generate a pre-signed URL for an object")},
-		{"scan", T("扫描桶名存在于哪些云存储服务（桶归属探测）", "Scan which cloud storage services host a bucket name")},
+		{"find", T("查找桶名存在于哪些云存储服务（桶归属探测，输出访问 URL）", "Find which cloud storage services host a bucket name (prints access URLs)")},
 	}, cCyan, "  "))
 
 	printSection(&b, T("常用示例", "EXAMPLES"), renderRows([][2]string{
@@ -114,7 +122,7 @@ func printRootHelp(w io.Writer, version string) {
 		{`oss cp ./dist s3://mybucket/release/ -r`, T("上传目录", "Upload a directory")},
 		{`oss cat s3://mybucket/config.yaml --range 0-1023`, T("查看对象片段", "View a byte range of an object")},
 		{`oss presign s3://mybucket/file.tar.gz --expires 1h`, T("生成 1 小时有效的预签名链接", "Generate a presigned URL valid for 1h")},
-		{`oss scan mybucket`, T("探测该桶名存在于哪些云存储", "Discover which cloud providers host this bucket name")},
+		{`oss find mybucket`, T("查找该桶名存在于哪些云存储（输出访问 URL）", "Discover which cloud providers host this bucket name (prints access URLs)")},
 	}, cCyan, "  "))
 
 	printSection(&b, T("目标写法", "TARGET SYNTAX"), renderRows([][2]string{

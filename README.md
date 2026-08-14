@@ -22,8 +22,8 @@ DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
 - 🗂 **列表缓存**：已列举内容默认缓存到本地，重复列举/导出/下载秒开（`-d` 这类需全量扫描的场景提速数百倍）
 - 📤 **导出文件列表**：按过滤条件导出为 `txt / csv / xlsx / yaml / markdown`（`--export`）
 - ⬇️ **筛选批量下载**：`cp -r` 按 `--include/--exclude/--prefix` 下载所有匹配文件，保持 key 目录结构
-- 🔍 **桶归属扫描**：`scan` 给定桶名并发探测各云存储，判断桶存在于哪个在线服务
-  （匿名探测，按响应码区分存在/私有/不存在，不要求可访问）
+- 🔍 **桶归属查找**：`find` 给定桶名并发探测各云存储，判断桶存在于哪个在线服务，
+  命中时输出完整访问 URL 列表和可直接运行的 oss 命令（匿名探测，不要求可访问）
 - 🎨 **终端友好**：交互式终端自动彩色高亮，管道/脚本场景自动输出纯文本（`--color auto|always|never`）
 - 🌍 **中英文帮助**：自动识别系统语言，中文环境显示中文帮助，其余显示英文（可用 `OSS_LANG=zh|en` 强制）
 - 📄 **大桶优化**：流式分页列举（常数内存）、NDJSON 流式输出、有界并发下载，百万级对象不占内存
@@ -238,19 +238,32 @@ oss presign s3://b/key --expires 1h         # GET 下载链接
 oss presign s3://b/key --method PUT         # 上传链接
 ```
 
-### `oss scan` — 桶归属扫描
+### `oss find` — 桶归属查找
 
 给定桶名，并发探测各云存储，判断桶存在于哪个在线服务（匿名探测，不要求可访问，
 按响应码区分：200/3xx/401/403 = 存在，404/域名不存在 = 不存在，其余 = 无法判断）。
+**命中时输出完整访问 URL 列表和可直接运行的 oss 命令**。
 
 ```bash
-oss scan mybucket                     # 扫描所有厂商的常用区域
-oss scan mybucket --region cn-beijing # 只探测指定区域
-oss scan mybucket -j                  # NDJSON 输出
+oss find mybucket                     # 查找所有厂商的常用区域
+oss find mybucket --region cn-beijing # 只探测指定区域
+oss find mybucket -j                  # NDJSON 输出（含 URL 汇总行）
+```
+
+命中输出示例：
+
+```
+✓ 桶 "mybucket" 存在于 1 个服务: AWS S3 (公开可读)
+
+访问 URL:
+  AWS S3 (公开可读)
+    https://mybucket.s3.amazonaws.com/
+    → 可直接使用: oss ls "https://mybucket.s3.amazonaws.com/?delimiter=/"
 ```
 
 说明：各厂商只探测内置常用区域（AWS/GCS 全域）；腾讯云桶名需含 APPID 后缀；
 B2/七牛不支持匿名探测、R2 需账号 ID，不在探测范围。结果为最佳判断，未找到不代表绝对不存在。
+别名：`which`（桶安全检测命令规划中，将使用 `scan`/`audit` 名称）。
 
 ## 全局连接参数
 
@@ -338,13 +351,13 @@ B2/七牛不支持匿名探测、R2 需账号 ID，不在探测范围。结果�
 | `--expires <d>` | `15m` | 链接有效期，如 `15m`、`1h` |
 | `--method <m>` | `GET` | 签名的 HTTP 方法：`GET`（下载）\| `PUT`（上传） |
 
-### `oss scan` — 桶归属扫描
+### `oss find` — 桶归属查找
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--region <R>` | 各厂商常用区域 | 只探测指定区域（覆盖内置区域列表） |
 | `--jobs <N>` | 全部并发 | 并发探测数 |
-| `-j, --json` | | NDJSON 输出（每个厂商一行） |
+| `-j, --json` | | NDJSON 输出（每个厂商一行 + 结果汇总行，含访问 URL） |
 
 ### 公共连接参数（所有子命令）
 
