@@ -82,6 +82,14 @@ func cBlue(s string) string   { return paint(s, "34") }
 func cCyan(s string) string   { return paint(s, "36") }
 func cGreen(s string) string  { return paint(s, "32") }
 func cYellow(s string) string { return paint(s, "33") }
+func cRed(s string) string    { return paint(s, "31") }
+
+// cGrey renders dim grey (bright black) for de-emphasized text.
+func cGrey(s string) string { return paint(s, "90") }
+
+// cGreenBright renders bold bright green — used to make anonymously
+// listable buckets stand out in `oss find` output.
+func cGreenBright(s string) string { return paint(s, "1;92") }
 
 func eYellow(s string) string { return paintErr(s, "33") }
 func eGreen(s string) string  { return paintErr(s, "32") }

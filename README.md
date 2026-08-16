@@ -22,8 +22,9 @@ DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
 - 🗂 **列表缓存**：已列举内容默认缓存到本地，重复列举/导出/下载秒开（`-d` 这类需全量扫描的场景提速数百倍）
 - 📤 **导出文件列表**：按过滤条件导出为 `txt / csv / xlsx / yaml / markdown`（`--export`）
 - ⬇️ **筛选批量下载**：`cp -r` 按 `--include/--exclude/--prefix` 下载所有匹配文件，保持 key 目录结构
-- 🔍 **桶归属查找**：`find` 给定桶名并发探测各云存储，判断桶存在于哪个在线服务，
-  命中时输出完整访问 URL 列表和可直接运行的 oss 命令（匿名探测，不要求可访问）
+- 🔍 **桶归属查找**：`find` 批量（命令行多个/标准输入）探测桶在哪个云存储，
+  支持桶名与完整桶 URL；匿名探测并同时识别**能否匿名列目录**，可匿名列目录的桶
+  命令行亮绿 ★ 高亮，`--export` 导出含专门 `listable_url` 字段的 txt/csv/xlsx/yaml/md
 - 🎨 **终端友好**：交互式终端自动彩色高亮，管道/脚本场景自动输出纯文本（`--color auto|always|never`）
 - 🌍 **中英文帮助**：自动识别系统语言，中文环境显示中文帮助，其余显示英文（可用 `OSS_LANG=zh|en` 强制）
 - 📄 **大桶优化**：流式分页列举（常数内存）、NDJSON 流式输出、有界并发下载，百万级对象不占内存
@@ -240,25 +241,40 @@ oss presign s3://b/key --method PUT         # 上传链接
 
 ### `oss find` — 桶归属查找
 
-给定桶名，并发探测各云存储，判断桶存在于哪个在线服务（匿名探测，不要求可访问，
-按响应码区分：200/3xx/401/403 = 存在，404/域名不存在 = 不存在，其余 = 无法判断）。
-**命中时输出完整访问 URL 列表和可直接运行的 oss 命令**。
+支持批量：命令行给多个参数，和/或从 stdin 一行一个读取（可混用）。每个输入可以是
+**桶名**（并发探测所有已知厂商的常用区域）或**完整桶 URL/路径**（只探测该端点，更精确）。
+
+探测方式为向桶发**匿名 ListObjects 请求**，一次请求同时判断存在性 + 能否匿名列目录：
+
+| 响应 | 判定 |
+|---|---|
+| HTTP 200 | 存在且**可匿名列目录**（命令行亮绿 ★ 高亮） |
+| HTTP 3xx | 存在（重定向） |
+| HTTP 401/403 | 存在但私有（不可匿名列） |
+| HTTP 404 / 域名不存在 | 不存在 |
+| 超时 / 其它状态码 | 无法判断 |
 
 ```bash
-oss find mybucket                     # 查找所有厂商的常用区域
-oss find mybucket --region cn-beijing # 只探测指定区域
-oss find mybucket -j                  # NDJSON 输出（含 URL 汇总行）
+oss find mybucket                       # 查找单个桶名
+oss find bucket-a bucket-b bucket-c     # 批量（命令行多个）
+cat buckets.txt | oss find              # 批量（stdin 一行一个）
+oss find https://mybucket.s3.us-east-1.amazonaws.com/   # 完整 URL
+oss find mybucket --region cn-beijing   # 只探测指定区域
+oss find bucket-a bucket-b --export r.csv   # 导出 CSV
 ```
 
-命中输出示例：
+**导出**（`--export`）：格式按扩展名 `.txt .csv .xlsx .yaml .md`，包含专门字段
+`listable_url`，**仅对可匿名列目录的桶**填入其完整访问 URL，便于直接筛选可匿名列举的目标。
+
+输出示例（可匿名列目录的桶亮绿 ★ 高亮）：
 
 ```
-✓ 桶 "mybucket" 存在于 1 个服务: AWS S3 (公开可读)
+noaa-nwm-pds
+  ★  AWS S3  可匿名列目录  https://noaa-nwm-pds.s3.amazonaws.com
 
-访问 URL:
-  AWS S3 (公开可读)
-    https://mybucket.s3.amazonaws.com/
-    → 可直接使用: oss ls "https://mybucket.s3.amazonaws.com/?delimiter=/"
+★ 发现 1 个可匿名列目录的桶:
+  ★ https://noaa-nwm-pds.s3.amazonaws.com
+    → 可直接使用: oss ls "https://noaa-nwm-pds.s3.amazonaws.com?delimiter=/"
 ```
 
 说明：各厂商只探测内置常用区域（AWS/GCS 全域）；腾讯云桶名需含 APPID 后缀；
@@ -357,7 +373,8 @@ B2/七牛不支持匿名探测、R2 需账号 ID，不在探测范围。结果�
 |---|---|---|
 | `--region <R>` | 各厂商常用区域 | 只探测指定区域（覆盖内置区域列表） |
 | `--jobs <N>` | 全部并发 | 并发探测数 |
-| `-j, --json` | | NDJSON 输出（每个厂商一行 + 结果汇总行，含访问 URL） |
+| `-j, --json` | | NDJSON 输出（每个探测一行 + 汇总行，含 anonymous_listable 数组） |
+| `--export <file>` | | 导出结果，格式按扩展名 `.txt .csv .xlsx .yaml .md`；含 `listable_url` 字段存可匿名列桶的完整 URL |
 
 ### 公共连接参数（所有子命令）
 

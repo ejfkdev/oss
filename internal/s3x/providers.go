@@ -78,6 +78,27 @@ func ProviderNames() []string {
 	return names
 }
 
+// providerDisplay maps a provider key to a human-friendly display name.
+var providerDisplay = map[string]string{
+	"aws": "AWS S3", "aliyun": "Aliyun OSS", "tencent": "Tencent COS",
+	"huawei": "Huawei OBS", "qiniu": "Qiniu Kodo", "baidu": "Baidu BOS",
+	"ks3": "Kingsoft KS3", "ucloud": "UCloud US3", "jdcloud": "JD Cloud OSS",
+	"scaleway": "Scaleway Object Storage", "gcs": "Google Cloud Storage",
+	"r2": "Cloudflare R2", "wasabi": "Wasabi", "spaces": "DigitalOcean Spaces",
+	"b2": "Backblaze B2", "minio": "MinIO", "custom": "Custom",
+}
+
+// ProviderDisplayName returns a display name for a provider key.
+func ProviderDisplayName(key string) string {
+	if n, ok := providerDisplay[key]; ok {
+		return n
+	}
+	if key == "" {
+		return providerDisplay["custom"]
+	}
+	return key
+}
+
 func renderEndpoint(template, region string) string {
 	if template == "" {
 		return ""

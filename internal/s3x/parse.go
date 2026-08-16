@@ -77,6 +77,23 @@ func ValidBucketName(name string) bool {
 	return reBucketName.MatchString(name)
 }
 
+// BucketRootURL reconstructs the bucket root URL from a parsed target
+// (scheme://bucket.host/ for virtual-host style, endpoint/bucket/ for
+// path-style). Returns "" when the target carries no endpoint.
+func BucketRootURL(t *Target) string {
+	if t == nil || t.Endpoint == "" || t.Bucket == "" {
+		return ""
+	}
+	u, err := url.Parse(t.Endpoint)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if t.PathStyle {
+		return u.Scheme + "://" + u.Host + "/" + t.Bucket + "/"
+	}
+	return u.Scheme + "://" + t.Bucket + "." + u.Host + "/"
+}
+
 // IsRemote reports whether s looks like a remote object-storage reference
 // (it carries a scheme we understand).
 func IsRemote(s string) bool {	u, err := url.Parse(s)

@@ -25,9 +25,11 @@ DigitalOcean Spaces, Backblaze B2, MinIO and any other S3-compatible service.
 - 📤 **Export file lists**: export filtered listings to `txt / csv / xlsx / yaml / markdown` (`--export`)
 - ⬇️ **Filtered batch download**: `cp -r` downloads everything matching
   `--include/--exclude/--prefix`, preserving the key directory structure
-- 🔍 **Bucket discovery**: `find` probes all cloud providers in parallel for a given
-  bucket name and reports which online service hosts it, printing the full access URLs
-  plus ready-to-run oss commands (anonymous probes; accessibility is not required)
+- 🔍 **Bucket discovery**: `find` probes (batch: multiple args / stdin) which cloud
+  storage hosts a bucket, accepting bucket names and full bucket URLs; anonymous probes
+  also detect **whether anonymous directory listing is allowed**, highlighting anonymously
+  listable buckets in bright green, with `--export` to txt/csv/xlsx/yaml/md including a
+  dedicated `listable_url` field
 - 🎨 **Terminal-friendly**: colored output on interactive terminals, plain text when piped
   (`--color auto|always|never`)
 - 🌍 **Bilingual help**: the system language is auto-detected — Chinese help in Chinese
@@ -255,27 +257,44 @@ oss presign s3://b/key --method PUT         # upload link
 
 ### `oss find` — bucket discovery
 
-Given a bucket name, probes all cloud providers in parallel and reports which
-online service hosts the bucket (anonymous probes; accessibility not required —
-existence is inferred from response codes: 200/3xx/401/403 = exists,
-404/no-such-host = not found, anything else = inconclusive).
-**When found, the full access URLs are printed together with ready-to-run oss commands.**
+Batch supported: give multiple arguments, and/or pipe one entry per line via stdin
+(both can be combined). Each input can be a **bucket name** (probes all known
+providers' common regions) or a **full bucket URL/path** (probes only that
+endpoint, more precise).
+
+Probing sends an **anonymous ListObjects request**, revealing both existence and
+anonymous-listability in a single request:
+
+| Response | Verdict |
+|---|---|
+| HTTP 200 | exists AND **anonymously listable** (bright-green ★ highlight) |
+| HTTP 3xx | exists (redirect) |
+| HTTP 401/403 | exists but private (not anonymously listable) |
+| HTTP 404 / no such host | not found |
+| timeout / other status | inconclusive |
 
 ```bash
-oss find mybucket                     # check the default regions of all providers
-oss find mybucket --region cn-beijing # probe only the given region
-oss find mybucket -j                  # NDJSON output (incl. a summary line with URLs)
+oss find mybucket                       # find a single bucket name
+oss find bucket-a bucket-b bucket-c     # batch (multiple arguments)
+cat buckets.txt | oss find              # batch (stdin, one per line)
+oss find https://mybucket.s3.us-east-1.amazonaws.com/   # full URL
+oss find mybucket --region cn-beijing   # probe only the given region
+oss find bucket-a bucket-b --export r.csv   # export CSV
 ```
 
-Example output when found:
+**Export** (`--export`): format by extension `.txt .csv .xlsx .yaml .md`; includes a
+dedicated `listable_url` field, filled **only for anonymously listable buckets** with
+their full access URL, so anonymously listable targets are easy to filter out.
+
+Example output (anonymously listable buckets highlighted with a bright-green ★):
 
 ```
-✓ bucket "mybucket" found on 1 service(s): AWS S3 (public)
+noaa-nwm-pds
+  ★  AWS S3  listable  https://noaa-nwm-pds.s3.amazonaws.com
 
-Access URLs:
-  AWS S3 (public)
-    https://mybucket.s3.amazonaws.com/
-    → ready to use: oss ls "https://mybucket.s3.amazonaws.com/?delimiter=/"
+★ found 1 anonymously listable bucket(s):
+  ★ https://noaa-nwm-pds.s3.amazonaws.com
+    → ready to use: oss ls "https://noaa-nwm-pds.s3.amazonaws.com?delimiter=/"
 ```
 
 Notes: only built-in common regions are probed (AWS/GCS globally); Tencent COS
@@ -377,7 +396,8 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 |---|---|---|
 | `--region <R>` | built-in common regions | probe only the given region (overrides the built-in region lists) |
 | `--jobs <N>` | all at once | concurrent probes |
-| `-j, --json` | | NDJSON output (one line per provider + a summary line with access URLs) |
+| `-j, --json` | | NDJSON output (one line per probe + a summary line with an anonymous_listable array) |
+| `--export <file>` | | export results, format by extension `.txt .csv .xlsx .yaml .md`; includes a `listable_url` field holding full URLs of anonymously listable buckets |
 
 ### Common connection flags (all subcommands)
 
