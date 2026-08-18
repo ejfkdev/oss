@@ -9,58 +9,42 @@ func TestScanURLs(t *testing.T) {
 	cases := []struct {
 		probe    ScanProbe
 		bucket   string
-		region   string
+		regions  []string
 		wantURLs []string
 	}{
 		{
 			probe:    ScanProbe{URLTemplate: "https://{bucket}.s3.amazonaws.com"},
 			bucket:   "mybucket",
+			regions:  nil, // region-less probe
 			wantURLs: []string{"https://mybucket.s3.amazonaws.com"},
 		},
 		{
-			probe: ScanProbe{
-				URLTemplate: "https://{bucket}.oss-{region}.aliyuncs.com",
-				Regions:     []string{"cn-hangzhou", "cn-beijing"},
-			},
+			probe:    ScanProbe{URLTemplate: "https://{bucket}.oss-{region}.aliyuncs.com"},
 			bucket:   "mybucket",
+			regions:  []string{"cn-hangzhou", "cn-beijing"},
 			wantURLs: []string{"https://mybucket.oss-cn-hangzhou.aliyuncs.com", "https://mybucket.oss-cn-beijing.aliyuncs.com"},
 		},
 		{
-			probe: ScanProbe{
-				URLTemplate: "https://{bucket}.oss-{region}.aliyuncs.com",
-				Regions:     []string{"cn-hangzhou", "cn-beijing"},
-			},
+			probe:    ScanProbe{URLTemplate: "https://{bucket}.oss-{region}.aliyuncs.com"},
 			bucket:   "mybucket",
-			region:   "cn-shenzhen", // override: probe only this region
+			regions:  []string{"cn-shenzhen"}, // single region override
 			wantURLs: []string{"https://mybucket.oss-cn-shenzhen.aliyuncs.com"},
 		},
 		{
-			probe: ScanProbe{
-				URLTemplate: "https://s3.{region}.jdcloud-oss.com/{bucket}",
-				Regions:     []string{"cn-north-1"},
-			},
+			probe:    ScanProbe{URLTemplate: "https://s3.{region}.jdcloud-oss.com/{bucket}"},
 			bucket:   "mybucket",
+			regions:  []string{"cn-north-1"},
 			wantURLs: []string{"https://s3.cn-north-1.jdcloud-oss.com/mybucket"},
-		},
-		{
-			// region override has no effect on non-regional probes
-			probe:    ScanProbe{URLTemplate: "https://storage.googleapis.com/{bucket}"},
-			bucket:   "mybucket",
-			region:   "cn-beijing",
-			wantURLs: []string{"https://storage.googleapis.com/mybucket"},
 		},
 	}
 	for _, tc := range cases {
-		got := tc.probe.ScanURLs(tc.bucket, tc.region)
+		got := tc.probe.ScanURLs(tc.bucket, tc.regions)
 		if len(got) != len(tc.wantURLs) {
-			t.Fatalf("ScanURLs(%q, %q) = %v, want %v", tc.bucket, tc.region, got, tc.wantURLs)
+			t.Fatalf("ScanURLs(%q, %v) = %v, want %v", tc.bucket, tc.regions, got, tc.wantURLs)
 		}
 		for i := range got {
 			if got[i] != tc.wantURLs[i] {
-				t.Errorf("ScanURLs(%q, %q)[%d] = %q, want %q", tc.bucket, tc.region, i, got[i], tc.wantURLs[i])
-			}
-			if strings.Contains(got[i], "{bucket}") || strings.Contains(got[i], "{region}") {
-				t.Errorf("unsubstituted placeholder in %q", got[i])
+				t.Errorf("ScanURLs(%q, %v)[%d] = %q, want %q", tc.bucket, tc.regions, i, got[i], tc.wantURLs[i])
 			}
 		}
 	}

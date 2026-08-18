@@ -304,10 +304,12 @@ noaa-nwm-pds
     → ready to use: oss ls "https://noaa-nwm-pds.s3.amazonaws.com?delimiter=/"
 ```
 
-Notes: every provider's **full set of public regions** is probed (AWS/GCS/Yandex
-use a single global endpoint; Aliyun 32, Tencent 21, Huawei 29, UCloud 25,
-Wasabi 14, Kingsoft 9, DigitalOcean Spaces 9, Baidu 7, JD 5,
-Exoscale 6, Scaleway 3, Arvan 2); Tencent COS bucket names need the APPID suffix
+Notes: **by default only mainland-China + HK/TW regions are probed** (`--cn` is
+the same); `--global` probes every public region (incl. overseas); `--region`
+probes a single region. Full region counts: Aliyun 32, Tencent 21, Huawei 29,
+UCloud 25, Wasabi 14, Kingsoft 9, DigitalOcean Spaces 9, Baidu 7, JD 5,
+Exoscale 6, Scaleway 3, Arvan 2, plus AWS international (global) + AWS China 2
+(`.amazonaws.com.cn`). Tencent COS bucket names need the APPID suffix
 (e.g. `examplebucket-1250000000`). **Qiniu is not supported**: it rejects all
 anonymous requests with 400 (auth required), so neither bucket existence nor
 anonymous listability can be determined, and its `bkt.clouddn.com` /
@@ -408,7 +410,9 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 
 | Flag | Default | Description |
 |---|---|---|
-| `--region <R>` | built-in common regions | probe only the given region (overrides the built-in region lists) |
+| `--cn` | default behavior | probe only mainland-China + HK/TW regions |
+| `--global` | | probe all regions (including overseas) |
+| `--region <R>` | | probe only the given region (overrides cn/global) |
 | `--jobs <N>` | all at once | concurrent probes |
 | `-j, --json` | | NDJSON output (one line per probe + a summary line with an anonymous_listable array) |
 | `--export <file>` | | export results, format by extension `.txt .csv .xlsx .yaml .md`; includes a `listable_url` field holding full URLs of anonymously listable buckets |

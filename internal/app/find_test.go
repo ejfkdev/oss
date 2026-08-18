@@ -20,7 +20,7 @@ func TestProbeURL(t *testing.T) {
 }
 
 func TestBuildFindJobsBareName(t *testing.T) {
-	jobs, invalid := buildFindJobs([]string{"mybucket"}, &s3x.ConnOpts{}, "")
+	jobs, invalid := buildFindJobs([]string{"mybucket"}, &s3x.ConnOpts{}, "", true)
 	if len(invalid) != 0 {
 		t.Fatalf("unexpected invalid: %v", invalid)
 	}
@@ -33,7 +33,7 @@ func TestBuildFindJobsBareName(t *testing.T) {
 		}
 	}
 	if len(jobs) != want {
-		t.Fatalf("bare name should fan out to %d probes, got %d", want, len(jobs))
+		t.Fatalf("bare name (--global) should fan out to %d probes, got %d", want, len(jobs))
 	}
 	for _, j := range jobs {
 		if j.Input != "mybucket" {
@@ -45,8 +45,28 @@ func TestBuildFindJobsBareName(t *testing.T) {
 	}
 }
 
+func TestBuildFindJobsBareNameCN(t *testing.T) {
+	jobs, invalid := buildFindJobs([]string{"mybucket"}, &s3x.ConnOpts{}, "", false)
+	if len(invalid) != 0 {
+		t.Fatalf("unexpected invalid: %v", invalid)
+	}
+	want := 0
+	for _, p := range s3x.ScanProbes {
+		want += len(p.CNRegions) // single (region-less) probes are skipped in CN mode
+	}
+	if len(jobs) != want {
+		t.Fatalf("bare name (default/--cn) should fan out to %d CN probes, got %d", want, len(jobs))
+	}
+	// No overseas region should be probed in CN mode.
+	for _, j := range jobs {
+		if strings.Contains(j.URL, "amazonaws.com/") && !strings.Contains(j.URL, "amazonaws.com.cn") {
+			t.Errorf("CN mode should not probe AWS international endpoint: %q", j.URL)
+		}
+	}
+}
+
 func TestBuildFindJobsFullURL(t *testing.T) {
-	jobs, invalid := buildFindJobs([]string{"https://mybucket.s3.us-east-1.amazonaws.com/prefix"}, &s3x.ConnOpts{}, "")
+	jobs, invalid := buildFindJobs([]string{"https://mybucket.s3.us-east-1.amazonaws.com/prefix"}, &s3x.ConnOpts{}, "", true)
 	if len(invalid) != 0 {
 		t.Fatalf("unexpected invalid: %v", invalid)
 	}
@@ -66,7 +86,7 @@ func TestBuildFindJobsFullURL(t *testing.T) {
 }
 
 func TestBuildFindJobsInvalid(t *testing.T) {
-	jobs, invalid := buildFindJobs([]string{"!!bad!!"}, &s3x.ConnOpts{}, "")
+	jobs, invalid := buildFindJobs([]string{"!!bad!!"}, &s3x.ConnOpts{}, "", true)
 	if len(jobs) != 0 {
 		t.Fatalf("invalid name should produce no jobs, got %d", len(jobs))
 	}

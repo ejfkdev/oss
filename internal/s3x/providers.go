@@ -124,9 +124,13 @@ type ScanProbe struct {
 	Name     string // display name
 	// URLTemplate builds the probe URL; {bucket} and {region} are substituted.
 	URLTemplate string
-	// Regions lists the regions probed for regional services. Empty means a
+	// Regions lists every region probed in --global mode. Empty means a
 	// single probe and URLTemplate must not contain {region}.
 	Regions []string
+	// CNRegions is the subset of Regions located in mainland China, Hong Kong
+	// or Taiwan; these are the regions probed by default and by --cn. Empty
+	// means the provider has no CN presence and is skipped unless --global.
+	CNRegions []string
 }
 
 // ScanProbes covers every provider with a predictable bucket URL. Not
@@ -134,8 +138,14 @@ type ScanProbe struct {
 // and Backblaze B2 (returns 403 for every bucket, so anonymous probes cannot
 // distinguish existing from non-existing).
 var ScanProbes = []ScanProbe{
+	// AWS international: the global endpoint redirects to the bucket's region.
 	{Provider: "aws", Name: "AWS S3",
-		URLTemplate: "https://{bucket}.s3.amazonaws.com"}, // global endpoint, any region
+		URLTemplate: "https://{bucket}.s3.amazonaws.com"},
+	// AWS China (separate .com.cn endpoints, CN regions).
+	{Provider: "aws", Name: "AWS S3 (China)",
+		URLTemplate: "https://{bucket}.s3.{region}.amazonaws.com.cn",
+		Regions:     []string{"cn-north-1", "cn-northwest-1"},
+		CNRegions:   []string{"cn-north-1", "cn-northwest-1"}},
 	{Provider: "aliyun", Name: "Aliyun OSS",
 		URLTemplate: "https://{bucket}.oss-{region}.aliyuncs.com",
 		Regions: []string{
@@ -146,6 +156,12 @@ var ScanProbes = []ScanProbe{
 			"ap-southeast-3", "ap-southeast-5", "ap-southeast-6", "ap-southeast-7",
 			"ap-southeast-8", "sa-east-1", "eu-central-1", "eu-west-1", "us-west-1",
 			"us-east-1", "na-south-1", "eu-west-2", "me-east-1",
+		},
+		CNRegions: []string{
+			"cn-hangzhou", "cn-shanghai", "cn-nanjing", "cn-fuzhou", "cn-wuhan-lr",
+			"cn-qingdao", "cn-beijing", "cn-zhangjiakou", "cn-huhehaote", "cn-wulanchabu",
+			"cn-shenzhen", "cn-heyuan", "cn-guangzhou", "cn-chengdu", "cn-zhongwei",
+			"cn-hongkong",
 		}},
 	{Provider: "tencent", Name: "Tencent COS",
 		URLTemplate: "https://{bucket}.cos.{region}.myqcloud.com",
@@ -155,6 +171,11 @@ var ScanProbes = []ScanProbe{
 			"ap-beijing-fsi", "ap-hongkong", "ap-singapore", "ap-jakarta", "ap-seoul",
 			"ap-bangkok", "ap-tokyo", "me-saudi-arabia", "na-siliconvalley",
 			"na-ashburn", "sa-saopaulo", "eu-frankfurt",
+		},
+		CNRegions: []string{
+			"ap-beijing-1", "ap-beijing", "ap-nanjing", "ap-shanghai", "ap-guangzhou",
+			"ap-chengdu", "ap-chongqing", "ap-shenzhen-fsi", "ap-shanghai-fsi",
+			"ap-beijing-fsi", "ap-hongkong",
 		}},
 	{Provider: "huawei", Name: "Huawei OBS",
 		URLTemplate: "https://{bucket}.obs.{region}.myhuaweicloud.com",
@@ -165,15 +186,26 @@ var ScanProbes = []ScanProbe{
 			"ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4",
 			"ap-southeast-5", "af-south-1", "me-east-1", "tr-west-1", "ru-northwest-2",
 			"na-mexico-1", "la-north-2", "la-south-2", "sa-brazil-1", "sa-peru-1",
+		},
+		CNRegions: []string{
+			"cn-north-1", "cn-north-2", "cn-north-4", "cn-north-9", "cn-north-11",
+			"cn-north-12", "cn-east-2", "cn-east-3", "cn-east-4", "cn-east-5",
+			"cn-south-1", "cn-south-2", "cn-south-4", "cn-southwest-2", "cn-southwest-3",
+			"ap-southeast-1", // ap-southeast-1 is Huawei's Hong Kong region
 		}},
 	{Provider: "baidu", Name: "Baidu BOS",
 		URLTemplate: "https://{bucket}.s3.{region}.bcebos.com",
-		Regions:     []string{"bj", "bd", "su", "gz", "hkg", "fwh", "fsh"}},
+		Regions:     []string{"bj", "bd", "su", "gz", "hkg", "fwh", "fsh"},
+		CNRegions:   []string{"bj", "bd", "su", "gz", "hkg", "fwh", "fsh"}},
 	{Provider: "ks3", Name: "Kingsoft KS3",
 		URLTemplate: "https://{bucket}.ks3-{region}.ksyuncs.com",
 		Regions: []string{
 			"cn-beijing", "cn-shanghai", "cn-guangzhou", "cn-qinghai", "cn-qingyang",
 			"cn-ningxia", "sgp", "jr-beijing", "jr-shanghai",
+		},
+		CNRegions: []string{
+			"cn-beijing", "cn-shanghai", "cn-guangzhou", "cn-qinghai", "cn-qingyang",
+			"cn-ningxia", "jr-beijing", "jr-shanghai",
 		}},
 	{Provider: "ucloud", Name: "UCloud US3",
 		URLTemplate: "https://{bucket}.{region}.ufileos.com",
@@ -182,10 +214,12 @@ var ScanProbes = []ScanProbe{
 			"us-ca", "us-ws", "us-den", "sg", "vn-sng", "ind-mumbai", "kr-seoul",
 			"jpn-tky", "th-bkk", "uk-london", "ge-fra", "rus-mosc", "uae-dubai",
 			"afr-nigeria", "bra-saopaulo", "idn-jakarta", "pk-khi", "kz-ala",
-		}},
+		},
+		CNRegions: []string{"cn-bj", "cn-wlcb", "cn-sh2", "cn-gd", "cn-guiyang1", "hk", "tw-tp"}},
 	{Provider: "jdcloud", Name: "JD Cloud OSS",
 		URLTemplate: "https://s3.{region}.jdcloud-oss.com/{bucket}",
-		Regions:     []string{"cn-north-1", "cn-south-1", "cn-east-1", "cn-east-2", "eu-west-1"}},
+		Regions:     []string{"cn-north-1", "cn-south-1", "cn-east-1", "cn-east-2", "eu-west-1"},
+		CNRegions:   []string{"cn-north-1", "cn-south-1", "cn-east-1", "cn-east-2"}},
 	{Provider: "scaleway", Name: "Scaleway Object Storage",
 		URLTemplate: "https://{bucket}.s3.{region}.scw.cloud",
 		Regions:     []string{"fr-par", "nl-ams", "pl-waw"}},
@@ -215,13 +249,9 @@ var ScanProbes = []ScanProbe{
 		Regions:     []string{"ir-thr-at1", "ir-tbz-sh1"}},
 }
 
-// ScanURLs renders all probe URLs for one probe. If regionOverride is
-// non-empty and the probe is regional, only that region is probed.
-func (p ScanProbe) ScanURLs(bucket, regionOverride string) []string {
-	regions := p.Regions
-	if regionOverride != "" && len(p.Regions) > 0 {
-		regions = []string{regionOverride}
-	}
+// ScanURLs renders probe URLs for the given regions. An empty regions list
+// renders a single URL (a region-less probe, no {region} substitution).
+func (p ScanProbe) ScanURLs(bucket string, regions []string) []string {
 	if len(regions) == 0 {
 		return []string{strings.ReplaceAll(p.URLTemplate, "{bucket}", bucket)}
 	}

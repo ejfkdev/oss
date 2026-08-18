@@ -284,14 +284,15 @@ noaa-nwm-pds
     → 可直接使用: oss ls "https://noaa-nwm-pds.s3.amazonaws.com?delimiter=/"
 ```
 
-说明：各厂商探测其**全部公网地域**（AWS/GCS/Yandex 为全域单一端点；阿里云 32、腾讯 21、
-华为 29、UCloud 25、Wasabi 14、金山 9、DigitalOcean Spaces 9、百度 7、京东 5、
-Exoscale 6、Scaleway 3、Arvan 2）；腾讯云桶名需含 APPID 后缀
-（如 `examplebucket-1250000000`）。**不支持七牛**：七牛匿名访问一律返回 400（需鉴权），
-无法判断桶是否存在或能否匿名列目录，且其 `bkt.clouddn.com` / `qiniudemo.com` 为绑定桶的
-CDN 域名、无法从桶名推导。B2 对所有桶返回 403、R2 需账号 ID，也不在探测范围。
-结果为最佳判断，未找到不代表绝对不存在。别名：`which`（桶安全检测命令规划中，
-将使用 `scan`/`audit` 名称）。
+说明：**默认只探测中国大陆+港台地域**（`--cn` 显式指定同效）；`--global` 探测全部
+公网地域（含海外）；`--region` 只探测指定区域。全量地域：阿里云 32、腾讯 21、华为 29、
+UCloud 25、Wasabi 14、金山 9、DigitalOcean Spaces 9、百度 7、京东 5、Exoscale 6、
+Scaleway 3、Arvan 2、AWS 国际全域+中国 2（`.amazonaws.com.cn`）。腾讯云桶名需含
+APPID 后缀（如 `examplebucket-1250000000`）。**不支持七牛**：七牛匿名访问一律返回
+400（需鉴权），无法判断桶是否存在或能否匿名列目录，且其 `bkt.clouddn.com` /
+`qiniudemo.com` 为绑定桶的 CDN 域名、无法从桶名推导。B2 对所有桶返回 403、R2 需账号 ID，
+也不在探测范围。结果为最佳判断，未找到不代表绝对不存在。别名：`which`（桶安全检测命令
+规划中，将使用 `scan`/`audit` 名称）。
 
 ## 全局连接参数
 
@@ -383,7 +384,9 @@ CDN 域名、无法从桶名推导。B2 对所有桶返回 403、R2 需账号 ID
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--region <R>` | 各厂商常用区域 | 只探测指定区域（覆盖内置区域列表） |
+| `--cn` | 默认行为 | 只探测中国大陆+港台地域 |
+| `--global` | | 探测全部地域（含海外） |
+| `--region <R>` | | 只探测指定区域（覆盖 cn/global） |
 | `--jobs <N>` | 全部并发 | 并发探测数 |
 | `-j, --json` | | NDJSON 输出（每个探测一行 + 汇总行，含 anonymous_listable 数组） |
 | `--export <file>` | | 导出结果，格式按扩展名 `.txt .csv .xlsx .yaml .md`；含 `listable_url` 字段存可匿名列桶的完整 URL |

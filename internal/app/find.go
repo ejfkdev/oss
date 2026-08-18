@@ -52,6 +52,8 @@ type findResult struct {
 func findCmd() *cli.Command {
 	flags := append([]cli.Flag{
 		&cli.IntFlag{Name: "jobs", Value: 0, Usage: T("并发探测数（默认全部并发）", "concurrent probes (default: all at once)")},
+		&cli.BoolFlag{Name: "cn", Usage: T("只探测中国大陆+港台地域（默认行为）", "probe only mainland-China + HK/TW regions (the default)")},
+		&cli.BoolFlag{Name: "global", Usage: T("探测全部地域（含海外）", "probe all regions (including overseas)")},
 		&cli.BoolFlag{Name: "json", Aliases: []string{"j"}, Usage: T("NDJSON 输出（每个探测一行 + 汇总行）", "NDJSON output (one line per probe + a summary line)")},
 		&cli.StringFlag{Name: "export", Usage: T("导出结果到文件，格式按扩展名 .txt .csv .xlsx .yaml .md；含 listable_url 字段存可匿名列桶的完整 URL", "export results to a file, format by extension .txt .csv .xlsx .yaml .md; includes a listable_url field holding full URLs of anonymously listable buckets")},
 	}, connFlags()...)
@@ -84,8 +86,8 @@ func findCmd() *cli.Command {
    oss find bucket-a bucket-b --export r.csv   导出 CSV（含 listable_url）
 
 说明:
-   - 各厂商只探测内置的常用区域（AWS/GCS 为全域探测）；
-     未找到不代表绝对不存在，可用 --region 指定区域重试
+   - 默认只探测中国大陆+港台地域（--cn 显式指定同效）；--global 探测全部地域（含海外）；
+     --region 可只探测指定区域。未找到不代表绝对不存在，可用 --region 或 --global 重试
    - 腾讯云桶名需含 APPID 后缀（如 mybucket-1250000000）
    - 不支持七牛：匿名访问一律返回 400，无法判断存在性；B2 恒返回 403、R2 需账号 ID，
      也都不在探测范围
@@ -115,8 +117,9 @@ EXAMPLES:
    oss find bucket-a bucket-b --export r.csv   export CSV (with listable_url)
 
 NOTES:
-   - Only built-in common regions are probed (AWS/GCS are probed globally);
-     "not found" is not a guarantee — retry with --region when in doubt
+   - By default only mainland-China + HK/TW regions are probed (--cn is the
+     same); --global probes all regions (incl. overseas); --region probes a
+     single region. "not found" is not a guarantee — retry with --region/--global
    - Tencent COS bucket names include the APPID suffix (e.g. mybucket-1250000000)
    - Qiniu is not supported (anonymous requests always return 400, so existence
      cannot be determined); B2 always returns 403 and R2 needs an account ID,
@@ -155,7 +158,9 @@ func collectFindInputs(c *cli.Command) []string {
 
 // buildFindJobs turns inputs into probe jobs. Bare bucket names fan out to
 // every known provider; full URLs/paths probe only the parsed endpoint.
-func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string) (jobs []findResult, invalid map[string]string) {
+// global=true probes every region; otherwise only CN regions (mainland
+// China + HK/TW) are probed. regionOverride, when set, takes precedence.
+func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string, global bool) (jobs []findResult, invalid map[string]string) {
 	type job struct {
 		input    string
 		provider string
@@ -194,15 +199,27 @@ func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string) (job
 			continue
 		}
 		for _, p := range s3x.ScanProbes {
-			urls := p.ScanURLs(t.Bucket, regionOverride)
 			if len(p.Regions) == 0 {
-				js = append(js, job{input: in, provider: p.Provider, name: p.Name, region: "", url: urls[0]})
+				// Region-less probe (e.g. AWS international global endpoint,
+				// GCS, Yandex): only probed with --global and no --region.
+				if global && regionOverride == "" {
+					js = append(js, job{input: in, provider: p.Provider, name: p.Name, region: "", url: p.ScanURLs(t.Bucket, nil)[0]})
+				}
 				continue
 			}
-			regions := p.Regions
-			if regionOverride != "" {
+			var regions []string
+			switch {
+			case regionOverride != "":
 				regions = []string{regionOverride}
+			case global:
+				regions = p.Regions
+			default: // default: CN only (mainland + HK/TW)
+				regions = p.CNRegions
 			}
+			if len(regions) == 0 {
+				continue // e.g. --cn for a provider with no CN regions
+			}
+			urls := p.ScanURLs(t.Bucket, regions)
 			for i, u := range urls {
 				js = append(js, job{input: in, provider: p.Provider, name: p.Name, region: regions[i], url: u})
 			}
@@ -306,8 +323,12 @@ func runFind(ctx context.Context, c *cli.Command) error {
 		return http.ErrUseLastResponse
 	}
 	regionOverride := c.String("region")
+	if c.Bool("cn") && c.Bool("global") {
+		return errors.New(T("--cn 与 --global 不能同时使用", "--cn and --global are mutually exclusive"))
+	}
+	global := c.Bool("global") // default (and --cn): CN regions only
 
-	results, invalid := buildFindJobs(inputs, o, regionOverride)
+	results, invalid := buildFindJobs(inputs, o, regionOverride, global)
 	if len(results) == 0 && len(invalid) == len(inputs) {
 		return errors.New(T("没有可探测的输入", "no probeable inputs"))
 	}
