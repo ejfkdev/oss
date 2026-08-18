@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -54,7 +53,7 @@ func findCmd() *cli.Command {
 		&cli.IntFlag{Name: "jobs", Value: 0, Usage: T("并发探测数（默认全部并发）", "concurrent probes (default: all at once)")},
 		&cli.BoolFlag{Name: "cn", Usage: T("只探测中国大陆+港台地域（默认行为）", "probe only mainland-China + HK/TW regions (the default)")},
 		&cli.BoolFlag{Name: "global", Usage: T("探测全部地域（含海外）", "probe all regions (including overseas)")},
-		&cli.BoolFlag{Name: "listable", Aliases: []string{"l"}, Usage: T("仅输出可匿名列目录的桶：发现即流式打印完整访问 URL（配合 -j 输出 NDJSON），适合管道处理", "only output anonymously listable buckets: stream full access URLs as they are found (NDJSON with -j), pipe-friendly")},
+		&cli.BoolFlag{Name: "listable", Aliases: []string{"l"}, Usage: T("切换为「发现可匿名列目录的桶」模式：只输出可匿名列目录的命中（默认模式输出所有存储命中）", "switch to the 'anonymously listable' mode: only print anonymously listable hits (the default mode prints every storage hit)")},
 		&cli.BoolFlag{Name: "json", Aliases: []string{"j"}, Usage: T("NDJSON 输出（每个探测一行 + 汇总行）", "NDJSON output (one line per probe + a summary line)")},
 		&cli.StringFlag{Name: "export", Usage: T("导出结果到文件，格式按扩展名 .txt .csv .xlsx .yaml .md；含 listable_url 字段存可匿名列桶的完整 URL", "export results to a file, format by extension .txt .csv .xlsx .yaml .md; includes a listable_url field holding full URLs of anonymously listable buckets")},
 	}, connFlags()...)
@@ -79,21 +78,20 @@ func findCmd() *cli.Command {
    超时/其它状态码   → 无法判断
 
 示例:
-   oss find mybucket                       查找单个桶名
+   oss find mybucket                       查找单个桶名（命中即逐行流式打印）
    oss find bucket-a bucket-b bucket-c     批量（命令行多个）
    cat buckets.txt | oss find              批量（stdin 一行一个）
    oss find https://mybucket.s3.us-east-1.amazonaws.com/   完整 URL
+   oss find mybucket --listable            只列出可匿名列目录的桶
    oss find mybucket -j                    NDJSON 输出
    oss find bucket-a bucket-b --export r.csv   导出 CSV（含 listable_url）
-   oss find mybucket --listable            仅流式输出可匿名列目录桶的完整 URL
-   oss find mybucket --listable -j         同上，NDJSON（发现即输出）
-   cat buckets.txt | oss find --listable | xargs -I{} oss ls "{}"
 
 说明:
    - 默认只探测中国大陆+港台地域（--cn 显式指定同效）；--global 探测全部地域（含海外）；
      --region 可只探测指定区域。未找到不代表绝对不存在，可用 --region 或 --global 重试
-   - 默认只显示命中的厂商（未发现/无法判断的探测不再逐条列出）；
-     --listable 只流式输出可匿名列桶的完整访问地址，stdout 无其它内容，便于管道处理
+   - 两种模式：默认「发现桶存储」——存在即命中（含私有）；--listable「发现可匿名
+     列目录的桶」——只输出可匿名列目录的命中。两种模式都是只打印命中的结果，
+     发现一个命中就立即流式输出一行（含完整访问 URL），未命中的探测不输出
    - 腾讯云桶名需含 APPID 后缀（如 mybucket-1250000000）
    - 不支持七牛：匿名访问一律返回 400，无法判断存在性；B2 恒返回 403、R2 需账号 ID，
      也都不在探测范围
@@ -115,23 +113,23 @@ and anonymous-listability in a single request:
    timeout / other status  -> inconclusive
 
 EXAMPLES:
-   oss find mybucket                       find a single bucket name
+   oss find mybucket                       find a single bucket name (hits stream as found)
    oss find bucket-a bucket-b bucket-c     batch (multiple arguments)
    cat buckets.txt | oss find              batch (stdin, one per line)
    oss find https://mybucket.s3.us-east-1.amazonaws.com/   full URL
+   oss find mybucket --listable            list only anonymously listable buckets
    oss find mybucket -j                    NDJSON output
    oss find bucket-a bucket-b --export r.csv   export CSV (with listable_url)
-   oss find mybucket --listable            stream only full URLs of anonymously listable buckets
-   oss find mybucket --listable -j         same, as NDJSON (emitted as found)
-   cat buckets.txt | oss find --listable | xargs -I{} oss ls "{}"
 
 NOTES:
    - By default only mainland-China + HK/TW regions are probed (--cn is the
      same); --global probes all regions (incl. overseas); --region probes a
      single region. "not found" is not a guarantee — retry with --region/--global
-   - Only matched providers are shown by default (not-found/inconclusive probes
-     are no longer listed); --listable streams only the full access URLs of
-     anonymously listable buckets — nothing else goes to stdout, pipe-friendly
+   - Two modes: the default "find bucket storage" mode treats any existing
+     bucket as a hit (private included); --listable switches to the "find
+     anonymously listable buckets" mode, printing only listable hits. Both
+     modes print only matches, streamed one line per hit (with the full access
+     URL); probes that find nothing are not printed at all
    - Tencent COS bucket names include the APPID suffix (e.g. mybucket-1250000000)
    - Qiniu is not supported (anonymous requests always return 400, so existence
      cannot be determined); B2 always returns 403 and R2 needs an account ID,
@@ -329,7 +327,10 @@ func runFind(ctx context.Context, c *cli.Command) error {
 
 	hc := s3x.NewHTTPClient(o)
 	if hc.Timeout == 0 {
-		hc.Timeout = 6 * time.Second
+		// Some endpoints (notably AWS' global root endpoint) can take well
+		// over ten seconds on first contact; keep the default generous so
+		// hits aren't lost to timeouts. --timeout still overrides.
+		hc.Timeout = 15 * time.Second
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -345,10 +346,38 @@ func runFind(ctx context.Context, c *cli.Command) error {
 		return errors.New(T("没有可探测的输入", "no probeable inputs"))
 	}
 
-	// Run all probes concurrently.
+	// Run all probes concurrently. In human mode, matches are streamed one
+	// line per hit the moment each probe resolves — no waiting for the whole
+	// scan to finish, and probes that find nothing are never printed.
+	//
+	// Two modes: default finds bucket storage (exists OR listable hits);
+	// --listable finds only anonymously listable buckets.
 	listableOnly := c.Bool("listable")
+	isHit := func(state string) bool {
+		if listableOnly {
+			return state == findListable
+		}
+		return state == findListable || state == findExists
+	}
 	jsonOut := c.Bool("json")
 	exportPath := c.String("export")
+	human := !jsonOut && exportPath == ""
+	multi := len(inputs) > 1
+	var w *tabwriter.Writer
+	if human {
+		w = tabwriter.NewWriter(os.Stdout, 1, 2, 2, ' ', 0)
+		// Invalid inputs are known up front; report them before probing.
+		for _, in := range inputs {
+			if msg, bad := invalid[in]; bad {
+				if multi {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", cGrey("·"), in, cGrey(msg))
+				} else {
+					fmt.Fprintf(w, "%s\t%s\n", cGrey("·"), msg)
+				}
+			}
+		}
+		_ = w.Flush()
+	}
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	if n := c.Int("jobs"); n > 0 {
@@ -361,18 +390,20 @@ func runFind(ctx context.Context, c *cli.Command) error {
 			status, state, detail, listable := probeBucket(gctx, hc, r.URL)
 			mu.Lock()
 			r.Status, r.State, r.Detail, r.Listable = status, state, detail, listable
-			// --listable streams hits the moment each probe resolves, so
-			// consumers can pipe URLs without waiting for the whole scan.
-			if listableOnly && listable && exportPath == "" {
-				if jsonOut {
-					line, _ := sonic.Marshal(map[string]any{
-						"input": r.Input, "provider": r.Provider, "name": r.Name,
-						"region": r.Region, "url": r.URL,
-					})
-					fmt.Println(string(line))
-				} else {
-					fmt.Println(r.URL)
+			if human && isHit(state) {
+				mark, stateText := stateStyle(state)
+				region := ""
+				if r.Region != "" {
+					region = " @ " + r.Region
 				}
+				if multi {
+					fmt.Fprintf(w, "%s\t%s\t%s%s\t%s\t%s\n",
+						mark, cGrey(r.Input), r.Name, region, stateText, r.URL)
+				} else {
+					fmt.Fprintf(w, "%s\t%s%s\t%s\t%s\n",
+						mark, r.Name, region, stateText, r.URL)
+				}
+				_ = w.Flush()
 			}
 			mu.Unlock()
 			return nil
@@ -380,46 +411,31 @@ func runFind(ctx context.Context, c *cli.Command) error {
 	}
 	_ = g.Wait()
 
-	// ---- Listable-only mode ----
-	if listableOnly {
-		var hits []findResult
-		for _, r := range results {
-			if r.Listable {
-				hits = append(hits, r)
-			}
-		}
-		if exportPath != "" {
-			if err := exportFindResults(exportPath, inputs, hits, invalid); err != nil {
-				return err
-			}
-			fmt.Printf("%s %s\n", checkMarkStdout(),
-				fmt.Sprintf(T("已导出 %d 个可匿名列目录的桶 → %s", "exported %d anonymously listable bucket(s) → %s"), len(hits), exportPath))
-			return nil
-		}
-		// Summary goes to stderr so stdout stays clean for piping.
-		if len(hits) == 0 {
-			fmt.Fprintf(os.Stderr, "%s %s\n", cGrey("✗"),
-				cGrey(T("未发现可匿名列目录的桶", "no anonymously listable bucket found")))
-		} else {
-			fmt.Fprintf(os.Stderr, "%s %s\n", cGreenBright("★"),
-				cGreenBright(fmt.Sprintf(T("共发现 %d 个可匿名列目录的桶", "found %d anonymously listable bucket(s) in total"), len(hits))))
-		}
-		return nil
-	}
-
 	// ---- Export mode ----
 	if path := c.String("export"); path != "" {
-		if err := exportFindResults(path, inputs, results, invalid); err != nil {
+		out := results
+		if listableOnly {
+			out = nil
+			for _, r := range results {
+				if r.Listable {
+					out = append(out, r)
+				}
+			}
+		}
+		if err := exportFindResults(path, inputs, out, invalid); err != nil {
 			return err
 		}
 		fmt.Printf("%s %s\n", checkMarkStdout(),
-			fmt.Sprintf(T("已导出 %d 条探测结果 → %s", "exported %d probe result(s) → %s"), len(results), path))
+			fmt.Sprintf(T("已导出 %d 条探测结果 → %s", "exported %d probe result(s) → %s"), len(out), path))
 		return nil
 	}
 
 	// ---- JSON mode ----
 	if c.Bool("json") {
 		for i := range results {
+			if listableOnly && !results[i].Listable {
+				continue
+			}
 			line, _ := sonic.Marshal(&results[i])
 			fmt.Println(string(line))
 		}
@@ -428,7 +444,7 @@ func runFind(ctx context.Context, c *cli.Command) error {
 		found := 0
 		for i := range results {
 			r := &results[i]
-			if r.State == findListable || r.State == findExists {
+			if isHit(r.State) {
 				found++
 			}
 			if r.Listable {
@@ -447,8 +463,10 @@ func runFind(ctx context.Context, c *cli.Command) error {
 		return nil
 	}
 
-	// ---- Human-readable output ----
-	printFindResults(inputs, results, invalid)
+	// ---- Human-readable tail ----
+	// Matches already streamed during probing; print no-hit inputs and the
+	// anonymously-listable summary.
+	printFindTail(inputs, results, invalid, listableOnly)
 	return nil
 }
 
@@ -466,57 +484,42 @@ func stateStyle(state string) (string, string) {
 	}
 }
 
-// printFindResults renders grouped, color-highlighted results.
-func printFindResults(inputs []string, results []findResult, invalid map[string]string) {
-	// Group by input, preserving input order.
+// printFindTail finishes the human-readable output: matches were already
+// streamed during probing, so this only reports inputs with no hits at all,
+// then prints the anonymously-listable summary. listableOnly selects the
+// wording for the no-hit line to match the active mode.
+func printFindTail(inputs []string, results []findResult, invalid map[string]string, listableOnly bool) {
 	byInput := make(map[string][]*findResult)
 	for i := range results {
 		r := &results[i]
 		byInput[r.Input] = append(byInput[r.Input], r)
 	}
 
+	noHitMsg := T("未在已知厂商中发现（可尝试 --global / --region 扩大范围）",
+		"not found on known providers (try --global / --region)")
+	if listableOnly {
+		noHitMsg = T("未发现可匿名列目录（桶可能不存在，或存在但私有）",
+			"not anonymously listable (bucket may not exist, or exists but is private)")
+	}
+
 	multi := len(inputs) > 1
 	w := tabwriter.NewWriter(os.Stdout, 1, 2, 2, ' ', 0)
-
 	for _, in := range inputs {
-		if msg, bad := invalid[in]; bad {
+		if _, bad := invalid[in]; bad {
+			continue // already reported before probing
+		}
+		matched := 0
+		for _, r := range byInput[in] {
+			if r.Listable || (!listableOnly && r.State == findExists) {
+				matched++
+			}
+		}
+		if matched == 0 {
 			if multi {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", cGrey("·"), in, cGrey(msg))
+				fmt.Fprintf(w, "%s\t%s\t%s\n", cGrey("✗"), in, cGrey(noHitMsg))
 			} else {
-				fmt.Fprintf(w, "%s\t%s\n", cGrey("·"), msg)
+				fmt.Fprintf(w, "%s\t%s\n", cGrey("✗"), cGrey(noHitMsg))
 			}
-			continue
-		}
-		rs := byInput[in]
-		if multi {
-			fmt.Fprintf(w, "%s\n", cBold(in))
-		}
-		// Only matched providers are shown (listable > exists); not-found and
-		// inconclusive probes stay hidden to keep the output uncluttered.
-		var foundList []*findResult
-		for _, r := range rs {
-			if r.State == findListable || r.State == findExists {
-				foundList = append(foundList, r)
-			}
-		}
-		sort.SliceStable(foundList, func(a, b int) bool {
-			if (foundList[a].State == findListable) != (foundList[b].State == findListable) {
-				return foundList[a].State == findListable
-			}
-			return false
-		})
-		for _, r := range foundList {
-			mark, stateText := stateStyle(r.State)
-			region := ""
-			if r.Region != "" {
-				region = " @ " + r.Region
-			}
-			fmt.Fprintf(w, "  %s\t%s%s\t%s\t%s\n",
-				mark, r.Name, region, stateText, r.URL)
-		}
-		if len(foundList) == 0 {
-			fmt.Fprintf(w, "  %s\t%s\n", cGrey("✗"),
-				cGrey(T("未在已知厂商中发现（可尝试 --global / --region 扩大范围）", "not found on known providers (try --global / --region)")))
 		}
 	}
 	_ = w.Flush()
