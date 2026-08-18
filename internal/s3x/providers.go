@@ -63,6 +63,15 @@ var Providers = map[string]Provider{
 	"b2": {
 		Name: "b2", EndpointTemplate: "https://s3.{region}.backblazeb2.com", DefaultRegion: "us-west-004",
 	},
+	"yandex": {
+		Name: "yandex", EndpointTemplate: "https://storage.yandexcloud.net", DefaultRegion: "ru-central1",
+	},
+	"exoscale": {
+		Name: "exoscale", EndpointTemplate: "https://{region}.sos.exoscale.com", DefaultRegion: "ch-gva-2",
+	},
+	"arvan": {
+		Name: "arvan", EndpointTemplate: "https://s3.{region}.arvanstorage.ir", DefaultRegion: "ir-thr-at1",
+	},
 	"minio": {
 		Name: "minio", ForcePathStyle: true, // requires -e http://host:9000
 	},
@@ -86,6 +95,8 @@ var providerDisplay = map[string]string{
 	"scaleway": "Scaleway Object Storage", "gcs": "Google Cloud Storage",
 	"r2": "Cloudflare R2", "wasabi": "Wasabi", "spaces": "DigitalOcean Spaces",
 	"b2": "Backblaze B2", "minio": "MinIO", "custom": "Custom",
+	"yandex": "Yandex Object Storage", "exoscale": "Exoscale SOS",
+	"arvan": "Arvan Cloud Storage",
 }
 
 // ProviderDisplayName returns a display name for a provider key.
@@ -191,10 +202,26 @@ var ScanProbes = []ScanProbe{
 		URLTemplate: "https://storage.googleapis.com/{bucket}"},
 	{Provider: "wasabi", Name: "Wasabi",
 		URLTemplate: "https://s3.{region}.wasabisys.com/{bucket}",
-		Regions:     []string{"us-east-1"}},
+		Regions: []string{
+			"us-east-1", "us-east-2", "us-central-1", "us-west-1", "ca-central-1",
+			"eu-central-1", "eu-central-2", "eu-west-1", "eu-west-2", "eu-south-1",
+			"ap-northeast-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2",
+		}},
 	{Provider: "spaces", Name: "DigitalOcean Spaces",
 		URLTemplate: "https://{region}.digitaloceanspaces.com/{bucket}",
-		Regions:     []string{"nyc3"}},
+		Regions: []string{
+			"ams3", "blr1", "fra1", "lon1", "nyc3", "sfo3", "sgp1", "syd1", "tor1",
+		}},
+	{Provider: "yandex", Name: "Yandex Object Storage",
+		URLTemplate: "https://{bucket}.storage.yandexcloud.net"},
+	{Provider: "exoscale", Name: "Exoscale SOS",
+		URLTemplate: "https://{bucket}.{region}.sos.exoscale.com",
+		Regions: []string{
+			"ch-gva-2", "ch-dk-2", "de-fra-1", "de-muc-1", "at-vie-1", "bg-sof-1",
+		}},
+	{Provider: "arvan", Name: "Arvan Cloud Storage",
+		URLTemplate: "https://{bucket}.s3.{region}.arvanstorage.ir",
+		Regions:     []string{"ir-thr-at1", "ir-tbz-sh1"}},
 }
 
 // ScanURLs renders all probe URLs for one probe. If regionOverride is
