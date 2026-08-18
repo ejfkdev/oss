@@ -87,7 +87,8 @@ func findCmd() *cli.Command {
    - 各厂商只探测内置的常用区域（AWS/GCS 为全域探测）；
      未找到不代表绝对不存在，可用 --region 指定区域重试
    - 腾讯云桶名需含 APPID 后缀（如 mybucket-1250000000）
-   - B2、七牛不支持匿名探测（恒返回错误），R2 需账号 ID，均不在探测范围
+   - 不支持七牛：匿名访问一律返回 400，无法判断存在性；B2 恒返回 403、R2 需账号 ID，
+     也都不在探测范围
    - 探测为匿名请求，不发送任何凭证`,
 			`oss find <bucket|URL> [...]  or  cat list.txt | oss find
 
@@ -117,8 +118,9 @@ NOTES:
    - Only built-in common regions are probed (AWS/GCS are probed globally);
      "not found" is not a guarantee — retry with --region when in doubt
    - Tencent COS bucket names include the APPID suffix (e.g. mybucket-1250000000)
-   - B2 and Qiniu cannot be probed anonymously (they always error); R2 needs an
-     account ID — none of these are probed
+   - Qiniu is not supported (anonymous requests always return 400, so existence
+     cannot be determined); B2 always returns 403 and R2 needs an account ID,
+     so none of these are probed
    - Probes are anonymous; no credentials are ever sent`),
 		Flags:  flags,
 		Action: runFind,

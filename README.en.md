@@ -6,9 +6,9 @@
 **[中文](README.md) | English**
 
 A cross-cloud object storage CLI based on the S3 protocol. One binary for all major providers:
-AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Qiniu Kodo, Baidu BOS, Kingsoft KS3,
+AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Baidu BOS, Kingsoft KS3,
 UCloud US3, JD Cloud OSS, Google Cloud Storage, Cloudflare R2, Scaleway, Wasabi,
-DigitalOcean Spaces, Backblaze B2, MinIO and any other S3-compatible service.
+DigitalOcean Spaces, Yandex, Exoscale, Arvan Cloud, Backblaze B2, MinIO and any other S3-compatible service.
 
 - 🌐 **Anonymous bucket browsing**: just pass a URL to list/download public-read buckets — no credentials needed
 - 🔗 **URL as the entry point**: access via `https://...` URLs; provider domains are recognized and
@@ -83,10 +83,13 @@ oss ls oss://mybucket/logs/ --ak <AK> --sk <SK> --region cn-hangzhou
 export OSS_ACCESS_KEY_ID=xxx OSS_SECRET_ACCESS_KEY=yyy   # or use env vars
 oss ls mybucket --provider aliyun                         # bare bucket name
 
-# Tencent COS / Huawei OBS / Qiniu
+# Tencent COS / Huawei OBS
 oss ls s3://bucket-1250000000 --provider tencent --region ap-guangzhou
 oss ls https://bucket.obs.cn-north-4.myhuaweicloud.com/prefix/
-oss ls s3://mybucket --provider qiniu --region cn-east-1
+
+# Yandex / Exoscale / Arvan
+oss ls s3://mybucket --provider yandex
+oss ls s3://mybucket --provider exoscale --region ch-gva-2
 
 # MinIO / self-hosted S3
 oss ls s3://mybucket -e http://127.0.0.1:9000 --ak minioadmin --sk minioadmin
@@ -121,7 +124,6 @@ Provider domains recognized automatically (endpoint / region / bucket are parsed
 | Aliyun | `bucket.oss-cn-hangzhou.aliyuncs.com` (incl. accelerate) |
 | Tencent | `bucket-appid.cos.ap-guangzhou.myqcloud.com` |
 | Huawei | `bucket.obs.cn-north-4.myhuaweicloud.com` |
-| Qiniu | `bucket.s3-cn-east-1.qiniucs.com` |
 | Baidu BOS | `bucket.s3.bj.bcebos.com`, `s3.bj.bcebos.com/bucket` |
 | Kingsoft KS3 | `bucket.ks3-cn-beijing.ksyuncs.com` |
 | UCloud US3 | `bucket.s3-cn-sh2.ufileos.com` |
@@ -304,15 +306,16 @@ noaa-nwm-pds
 
 Notes: every provider's **full set of public regions** is probed (AWS/GCS/Yandex
 use a single global endpoint; Aliyun 32, Tencent 21, Huawei 29, UCloud 25,
-Wasabi 14, Kingsoft 9, DigitalOcean Spaces 9, Baidu 7, Qiniu 6, JD 5,
+Wasabi 14, Kingsoft 9, DigitalOcean Spaces 9, Baidu 7, JD 5,
 Exoscale 6, Scaleway 3, Arvan 2); Tencent COS bucket names need the APPID suffix
-(e.g. `examplebucket-1250000000`); **Qiniu** rejects anonymous requests with
-400 (auth required), so anonymous probes cannot distinguish existence there
-(results are indicative only), and its `bkt.clouddn.com` / `qiniudemo.com`
-addresses are CDN domains bound to buckets (not derivable from the bucket
-name); B2 returns 403 for every bucket and R2 needs an account ID, so both are
-excluded. Results are best-effort — "not found" is not a guarantee. Alias:
-`which` (a bucket security-check command is planned under the `scan`/`audit` name).
+(e.g. `examplebucket-1250000000`). **Qiniu is not supported**: it rejects all
+anonymous requests with 400 (auth required), so neither bucket existence nor
+anonymous listability can be determined, and its `bkt.clouddn.com` /
+`qiniudemo.com` addresses are CDN domains bound to buckets (not derivable from
+the bucket name). B2 returns 403 for every bucket and R2 needs an account ID,
+so both are also excluded. Results are best-effort — "not found" is not a
+guarantee. Alias: `which` (a bucket security-check command is planned under the
+`scan`/`audit` name).
 
 ## Global connection flags
 
@@ -323,7 +326,7 @@ Supported by every subcommand:
 | `--ak` / `--sk` / `--token` | static credentials / STS session token |
 | `--profile` | AWS shared config profile (assume-role supported) |
 | `--anonymous` | force anonymous access |
-| `--provider` | `aws\|aliyun\|tencent\|huawei\|qiniu\|baidu\|ks3\|ucloud\|jdcloud\|scaleway\|gcs\|r2\|wasabi\|spaces\|b2\|minio` |
+| `--provider` | `aliyun\|arvan\|aws\|b2\|baidu\|exoscale\|gcs\|huawei\|jdcloud\|ks3\|minio\|r2\|scaleway\|spaces\|tencent\|ucloud\|wasabi\|yandex` |
 | `-e/--endpoint` | custom endpoint (overrides the provider default) |
 | `--region` | region (overrides the URL-derived one) |
 | `--path-style` | force path-style addressing |
@@ -419,7 +422,7 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 | `--token <T>` | STS session token (env `OSS_SESSION_TOKEN` / `AWS_SESSION_TOKEN`) |
 | `--profile <NAME>` | AWS shared config profile (`~/.aws/config`, assume-role supported) |
 | `--anonymous` | force anonymous access |
-| `--provider <P>` | storage provider: `aws aliyun tencent huawei qiniu gcs r2 wasabi spaces b2 minio` |
+| `--provider <P>` | storage provider: `aliyun arvan aws b2 baidu exoscale gcs huawei jdcloud ks3 minio r2 scaleway spaces tencent ucloud wasabi yandex` |
 | `-e, --endpoint <URL>` | custom endpoint (overrides the provider default) |
 | `--region <R>` | region (overrides the URL-derived one) |
 | `--path-style` | force path-style addressing (`http://host/bucket/key`) |

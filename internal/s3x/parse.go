@@ -55,7 +55,6 @@ var (
 	reTencentHost    = regexp.MustCompile(`^(.+)\.(cos(?:\.[a-z0-9-]+)+)\.myqcloud\.com$`)
 	reHuaweiVHost    = regexp.MustCompile(`^(.+)\.obs\.([a-z0-9-]+)\.myhuaweicloud\.com$`)
 	reHuaweiEndpoint = regexp.MustCompile(`^obs\.([a-z0-9-]+)\.myhuaweicloud\.com$`)
-	reQiniuVHost     = regexp.MustCompile(`^(.+)\.(s3-[a-z0-9-]+)\.qiniucs\.com$`)
 	reR2VHost        = regexp.MustCompile(`^(.+)\.([a-z0-9]{32})\.r2\.cloudflarestorage\.com$`)
 	reGCSEndpoint    = regexp.MustCompile(`^storage\.googleapis\.com$`)
 	reGCSVHost       = regexp.MustCompile(`^(.+)\.storage\.googleapis\.com$`)
@@ -235,9 +234,6 @@ func matchKnownHost(host string) (provider, endpoint, bucket, region string, ok 
 	}
 	if m := reHuaweiEndpoint.FindStringSubmatch(h); m != nil {
 		return "huawei", "https://" + h, "", m[1], true
-	}
-	if m := reQiniuVHost.FindStringSubmatch(h); m != nil {
-		return "qiniu", "https://" + m[2] + ".qiniucs.com", m[1], strings.TrimPrefix(m[2], "s3-"), true
 	}
 	if m := reR2VHost.FindStringSubmatch(h); m != nil {
 		return "r2", "https://" + m[2] + ".r2.cloudflarestorage.com", m[1], "auto", true

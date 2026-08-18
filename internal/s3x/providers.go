@@ -29,9 +29,6 @@ var Providers = map[string]Provider{
 	"huawei": {
 		Name: "huawei", EndpointTemplate: "https://obs.{region}.myhuaweicloud.com", DefaultRegion: "cn-north-4",
 	},
-	"qiniu": {
-		Name: "qiniu", EndpointTemplate: "https://s3.{region}.qiniucs.com", DefaultRegion: "cn-east-1",
-	},
 	"baidu": {
 		Name: "baidu", EndpointTemplate: "https://s3.{region}.bcebos.com", DefaultRegion: "bj",
 	},
@@ -90,7 +87,7 @@ func ProviderNames() []string {
 // providerDisplay maps a provider key to a human-friendly display name.
 var providerDisplay = map[string]string{
 	"aws": "AWS S3", "aliyun": "Aliyun OSS", "tencent": "Tencent COS",
-	"huawei": "Huawei OBS", "qiniu": "Qiniu Kodo", "baidu": "Baidu BOS",
+	"huawei": "Huawei OBS", "baidu": "Baidu BOS",
 	"ks3": "Kingsoft KS3", "ucloud": "UCloud US3", "jdcloud": "JD Cloud OSS",
 	"scaleway": "Scaleway Object Storage", "gcs": "Google Cloud Storage",
 	"r2": "Cloudflare R2", "wasabi": "Wasabi", "spaces": "DigitalOcean Spaces",
@@ -168,12 +165,6 @@ var ScanProbes = []ScanProbe{
 			"ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4",
 			"ap-southeast-5", "af-south-1", "me-east-1", "tr-west-1", "ru-northwest-2",
 			"na-mexico-1", "la-north-2", "la-south-2", "sa-brazil-1", "sa-peru-1",
-		}},
-	{Provider: "qiniu", Name: "Qiniu Kodo",
-		URLTemplate: "https://{bucket}.s3-{region}.qiniucs.com",
-		Regions: []string{
-			"cn-east-1", "cn-east-2", "cn-north-1", "cn-south-1",
-			"us-north-1", "ap-southeast-1",
 		}},
 	{Provider: "baidu", Name: "Baidu BOS",
 		URLTemplate: "https://{bucket}.s3.{region}.bcebos.com",

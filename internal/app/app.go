@@ -95,8 +95,8 @@ func printRootHelp(w io.Writer, version string) {
 	}
 	fmt.Fprintf(&b, "%s %s — %s\n",
 		cBold("oss"), v,
-		T("S3 协议跨云对象存储命令行工具（AWS / 阿里云 / 腾讯云 / 华为云 / 七牛 / GCS / R2 / MinIO …）",
-			"S3-compatible object storage CLI (AWS / Aliyun / Tencent / Huawei / Qiniu / GCS / R2 / MinIO ...)"))
+		T("S3 协议跨云对象存储命令行工具（AWS / 阿里云 / 腾讯云 / 华为云 / 百度 / 金山 / UCloud / 京东 / GCS / R2 / MinIO …）",
+			"S3-compatible object storage CLI (AWS / Aliyun / Tencent / Huawei / Baidu / Kingsoft / UCloud / JD / GCS / R2 / MinIO ...)"))
 	fmt.Fprintf(&b, "%s: %s\n", T("仓库", "Repo"), RepoURL)
 
 	fmt.Fprintf(&b, "\n%s:  %s\n", cBold(T("用法", "USAGE")),

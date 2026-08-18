@@ -1,8 +1,8 @@
 // Command oss is an S3-compatible object storage client for the major cloud
-// providers (AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Qiniu Kodo, GCS,
-// Cloudflare R2, MinIO, ...). It supports anonymous buckets, URL-style
-// targets with query filtering, AK/SK/STS auth, streaming pagination and
-// parallel downloads.
+// providers (AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Baidu BOS, Kingsoft
+// KS3, UCloud US3, JD Cloud OSS, GCS, Cloudflare R2, MinIO, ...). It supports
+// anonymous buckets, URL-style targets with query filtering, AK/SK/STS auth,
+// streaming pagination and parallel downloads.
 package main
 
 import (

@@ -6,7 +6,7 @@
 **中文 | [English](README.en.md)**
 
 基于 S3 协议的跨云对象存储命令行工具。一个二进制，操作主流云厂商的对象存储：
-AWS S3、阿里云 OSS、腾讯云 COS、华为云 OBS、七牛云 Kodo、百度云 BOS、金山云 KS3、
+AWS S3、阿里云 OSS、腾讯云 COS、华为云 OBS、百度云 BOS、金山云 KS3、
 UCloud US3、京东云 OSS、Google Cloud Storage、Cloudflare R2、Scaleway、Wasabi、
 DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
 
@@ -74,10 +74,13 @@ oss ls oss://mybucket/logs/ --ak <AK> --sk <SK> --region cn-hangzhou
 export OSS_ACCESS_KEY_ID=xxx OSS_SECRET_ACCESS_KEY=yyy   # 或者用环境变量
 oss ls mybucket --provider aliyun                         # 裸桶名写法
 
-# 腾讯云 COS / 华为云 OBS / 七牛
+# 腾讯云 COS / 华为云 OBS
 oss ls s3://bucket-1250000000 --provider tencent --region ap-guangzhou
 oss ls https://bucket.obs.cn-north-4.myhuaweicloud.com/prefix/
-oss ls s3://mybucket --provider qiniu --region cn-east-1
+
+# Yandex / Exoscale / Arvan
+oss ls s3://mybucket --provider yandex
+oss ls s3://mybucket --provider exoscale --region ch-gva-2
 
 # MinIO / 自建 S3
 oss ls s3://mybucket -e http://127.0.0.1:9000 --ak minioadmin --sk minioadmin
@@ -112,7 +115,6 @@ URL 自动识别的厂商域名（解析出 endpoint / region / bucket）：
 | 阿里云 | `bucket.oss-cn-hangzhou.aliyuncs.com`（含 accelerate） |
 | 腾讯云 | `bucket-appid.cos.ap-guangzhou.myqcloud.com` |
 | 华为云 | `bucket.obs.cn-north-4.myhuaweicloud.com` |
-| 七牛云 | `bucket.s3-cn-east-1.qiniucs.com` |
 | 百度云 BOS | `bucket.s3.bj.bcebos.com`、`s3.bj.bcebos.com/bucket` |
 | 金山云 KS3 | `bucket.ks3-cn-beijing.ksyuncs.com` |
 | UCloud US3 | `bucket.s3-cn-sh2.ufileos.com` |
@@ -283,11 +285,11 @@ noaa-nwm-pds
 ```
 
 说明：各厂商探测其**全部公网地域**（AWS/GCS/Yandex 为全域单一端点；阿里云 32、腾讯 21、
-华为 29、UCloud 25、Wasabi 14、金山 9、DigitalOcean Spaces 9、百度 7、七牛 6、
-京东 5、Exoscale 6、Scaleway 3、Arvan 2）；腾讯云桶名需含 APPID 后缀
-（如 `examplebucket-1250000000`）；**七牛**匿名访问返回 400（需鉴权），匿名探测无法
-区分存在与否（结果仅供参考），且其 `bkt.clouddn.com` / `qiniudemo.com` 为绑定桶的
-CDN 域名、无法从桶名推导；B2 对所有桶返回 403、R2 需账号 ID，均不在探测范围。
+华为 29、UCloud 25、Wasabi 14、金山 9、DigitalOcean Spaces 9、百度 7、京东 5、
+Exoscale 6、Scaleway 3、Arvan 2）；腾讯云桶名需含 APPID 后缀
+（如 `examplebucket-1250000000`）。**不支持七牛**：七牛匿名访问一律返回 400（需鉴权），
+无法判断桶是否存在或能否匿名列目录，且其 `bkt.clouddn.com` / `qiniudemo.com` 为绑定桶的
+CDN 域名、无法从桶名推导。B2 对所有桶返回 403、R2 需账号 ID，也不在探测范围。
 结果为最佳判断，未找到不代表绝对不存在。别名：`which`（桶安全检测命令规划中，
 将使用 `scan`/`audit` 名称）。
 
@@ -300,7 +302,7 @@ CDN 域名、无法从桶名推导；B2 对所有桶返回 403、R2 需账号 ID
 | `--ak` / `--sk` / `--token` | 静态凭证 / STS session token |
 | `--profile` | AWS 共享配置 profile（支持 assume-role） |
 | `--anonymous` | 强制匿名 |
-| `--provider` | `aws\|aliyun\|tencent\|huawei\|qiniu\|baidu\|ks3\|ucloud\|jdcloud\|scaleway\|gcs\|r2\|wasabi\|spaces\|b2\|minio` |
+| `--provider` | `aliyun\|arvan\|aws\|b2\|baidu\|exoscale\|gcs\|huawei\|jdcloud\|ks3\|minio\|r2\|scaleway\|spaces\|tencent\|ucloud\|wasabi\|yandex` |
 | `-e/--endpoint` | 自定义 endpoint（覆盖厂商默认） |
 | `--region` | 区域（覆盖 URL 推导值） |
 | `--path-style` | 强制 path-style 寻址 |
@@ -395,7 +397,7 @@ CDN 域名、无法从桶名推导；B2 对所有桶返回 403、R2 需账号 ID
 | `--token <T>` | STS 会话令牌（环境变量 `OSS_SESSION_TOKEN` / `AWS_SESSION_TOKEN`） |
 | `--profile <NAME>` | AWS 共享配置 profile（`~/.aws/config`，支持 assume-role） |
 | `--anonymous` | 强制匿名访问 |
-| `--provider <P>` | 云厂商：`aws aliyun tencent huawei qiniu baidu ks3 ucloud jdcloud scaleway gcs r2 wasabi spaces b2 minio` |
+| `--provider <P>` | 云厂商：`aliyun arvan aws b2 baidu exoscale gcs huawei jdcloud ks3 minio r2 scaleway spaces tencent ucloud wasabi yandex` |
 | `-e, --endpoint <URL>` | 自定义 endpoint（覆盖厂商默认值） |
 | `--region <R>` | 区域（覆盖 URL 推导值） |
 | `--path-style` | 强制 path-style 寻址（`http://host/bucket/key`） |

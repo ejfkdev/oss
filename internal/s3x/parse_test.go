@@ -79,12 +79,6 @@ func TestParseTarget(t *testing.T) {
 				Bucket: "bkt", Key: "k", Region: "cn-north-4", FromURL: true},
 		},
 		{
-			name: "qiniu kodo",
-			in:   "https://bkt.s3-cn-east-1.qiniucs.com/k",
-			want: Target{Provider: "qiniu", Endpoint: "https://s3-cn-east-1.qiniucs.com",
-				Bucket: "bkt", Key: "k", Region: "cn-east-1", FromURL: true},
-		},
-		{
 			name: "cloudflare r2",
 			in:   "https://bkt.0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/k",
 			want: Target{Provider: "r2", Endpoint: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
