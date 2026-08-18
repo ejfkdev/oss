@@ -117,7 +117,7 @@ URL 自动识别的厂商域名（解析出 endpoint / region / bucket）：
 | 金山云 KS3 | `bucket.ks3-cn-beijing.ksyuncs.com` |
 | UCloud US3 | `bucket.s3-cn-sh2.ufileos.com` |
 | 京东云 OSS | `s3.cn-north-1.jdcloud-oss.com/bucket`（path-style） |
-| Scaleway | `bucket.s3.fr-par.scw.cloud` |
+| Scaleway | `bucket.s3.fr-par.scw.cloud`（fr-par/nl-ams/pl-waw） |
 | Wasabi | `bucket.s3.us-east-1.wasabisys.com`（14 个地域） |
 | DigitalOcean Spaces | `nyc3.digitaloceanspaces.com/bucket`（9 个地域） |
 | Yandex | `bucket.storage.yandexcloud.net` |
@@ -284,7 +284,7 @@ noaa-nwm-pds
 
 说明：各厂商探测其**全部公网地域**（AWS/GCS/Yandex 为全域单一端点；阿里云 32、腾讯 21、
 华为 29、UCloud 25、Wasabi 14、金山 9、DigitalOcean Spaces 9、百度 7、七牛 6、
-京东 5、Exoscale 6、Arvan 2）；腾讯云桶名需含 APPID 后缀
+京东 5、Exoscale 6、Scaleway 3、Arvan 2）；腾讯云桶名需含 APPID 后缀
 （如 `examplebucket-1250000000`）；**七牛**匿名访问返回 400（需鉴权），匿名探测无法
 区分存在与否（结果仅供参考），且其 `bkt.clouddn.com` / `qiniudemo.com` 为绑定桶的
 CDN 域名、无法从桶名推导；B2 对所有桶返回 403、R2 需账号 ID，均不在探测范围。

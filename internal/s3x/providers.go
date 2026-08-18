@@ -197,7 +197,7 @@ var ScanProbes = []ScanProbe{
 		Regions:     []string{"cn-north-1", "cn-south-1", "cn-east-1", "cn-east-2", "eu-west-1"}},
 	{Provider: "scaleway", Name: "Scaleway Object Storage",
 		URLTemplate: "https://{bucket}.s3.{region}.scw.cloud",
-		Regions:     []string{"fr-par"}},
+		Regions:     []string{"fr-par", "nl-ams", "pl-waw"}},
 	{Provider: "gcs", Name: "Google Cloud Storage",
 		URLTemplate: "https://storage.googleapis.com/{bucket}"},
 	{Provider: "wasabi", Name: "Wasabi",

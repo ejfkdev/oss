@@ -126,7 +126,7 @@ Provider domains recognized automatically (endpoint / region / bucket are parsed
 | Kingsoft KS3 | `bucket.ks3-cn-beijing.ksyuncs.com` |
 | UCloud US3 | `bucket.s3-cn-sh2.ufileos.com` |
 | JD Cloud OSS | `s3.cn-north-1.jdcloud-oss.com/bucket` (path-style) |
-| Scaleway | `bucket.s3.fr-par.scw.cloud` |
+| Scaleway | `bucket.s3.fr-par.scw.cloud` (fr-par/nl-ams/pl-waw) |
 | Wasabi | `bucket.s3.us-east-1.wasabisys.com` (14 regions) |
 | DigitalOcean Spaces | `nyc3.digitaloceanspaces.com/bucket` (9 regions) |
 | Yandex | `bucket.storage.yandexcloud.net` |
@@ -305,7 +305,7 @@ noaa-nwm-pds
 Notes: every provider's **full set of public regions** is probed (AWS/GCS/Yandex
 use a single global endpoint; Aliyun 32, Tencent 21, Huawei 29, UCloud 25,
 Wasabi 14, Kingsoft 9, DigitalOcean Spaces 9, Baidu 7, Qiniu 6, JD 5,
-Exoscale 6, Arvan 2); Tencent COS bucket names need the APPID suffix
+Exoscale 6, Scaleway 3, Arvan 2); Tencent COS bucket names need the APPID suffix
 (e.g. `examplebucket-1250000000`); **Qiniu** rejects anonymous requests with
 400 (auth required), so anonymous probes cannot distinguish existence there
 (results are indicative only), and its `bkt.clouddn.com` / `qiniudemo.com`
