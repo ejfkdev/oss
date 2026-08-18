@@ -165,3 +165,59 @@ func TestClassifyProbeStandard(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildFindJobsProviderFilter(t *testing.T) {
+	jobs, invalid := buildFindJobs([]string{"mybucket"}, &s3x.ConnOpts{Provider: "aliyun"}, "", true)
+	if len(invalid) != 0 {
+		t.Fatalf("unexpected invalid: %v", invalid)
+	}
+	if len(jobs) == 0 {
+		t.Fatal("expected aliyun probes, got none")
+	}
+	for _, j := range jobs {
+		if j.Provider != "aliyun" {
+			t.Errorf("--provider aliyun should only produce aliyun probes, got %q (%s)", j.Provider, j.URL)
+		}
+	}
+	// A full URL input still probes its own endpoint.
+	jobs, _ = buildFindJobs([]string{"https://mybucket.s3.us-east-1.amazonaws.com/"},
+		&s3x.ConnOpts{Provider: "aliyun"}, "", true)
+	if len(jobs) != 1 || jobs[0].Provider != "aws" || !jobs[0].Targeted {
+		t.Errorf("full URL input should probe its own endpoint (targeted), got %+v", jobs)
+	}
+}
+
+func TestClassifySignedProbe(t *testing.T) {
+	listing := `<?xml version="1.0"?><ListBucketResult><Contents></Contents></ListBucketResult>`
+	cases := []struct {
+		status   int
+		body     string
+		targeted bool
+		state    string
+		listable bool
+	}{
+		// 200 with a real listing: confirmed via credentials.
+		{200, listing, false, findListable, true},
+		{200, listing, true, findListable, true},
+		// 200 that is actually an error body.
+		{200, `<Error><Code>AccessDenied</Code></Error>`, true, findExists, false},
+		// Credentials rejected: inconclusive either way.
+		{403, `<Error><Code>InvalidAccessKeyId</Code></Error>`, true, findUnknown, false},
+		{403, `<Error><Code>SignatureDoesNotMatch</Code></Error>`, false, findUnknown, false},
+		// Plain denial: "exists but denied" only for targeted probes.
+		{403, `<Error><Code>AccessDenied</Code></Error>`, true, findExists, false},
+		{403, `<Error><Code>AccessDenied</Code></Error>`, false, findUnknown, false},
+		{404, `<Error><Code>NoSuchBucket</Code></Error>`, true, findNotFound, false},
+		{301, ``, false, findExists, false},
+		// UCloud-style RetCode bodies.
+		{200, `{"RetCode":-148653, "ErrMsg":"bucket not exists"}`, false, findNotFound, false},
+		{200, `{"RetCode":-148643, "ErrMsg":"no authorization found"}`, true, findExists, false},
+	}
+	for _, c := range cases {
+		state, _, listable := classifySignedProbe(c.status, []byte(c.body), c.targeted)
+		if state != c.state || listable != c.listable {
+			t.Errorf("classifySignedProbe(%d, %q, targeted=%v) = (%q,%v), want (%q,%v)",
+				c.status, c.body, c.targeted, state, listable, c.state, c.listable)
+		}
+	}
+}

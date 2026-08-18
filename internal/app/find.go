@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/bytedance/sonic"
 	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v3"
@@ -46,6 +50,9 @@ type findResult struct {
 	State    string `json:"state"` // listable | exists | notfound | unknown
 	Detail   string `json:"detail"`
 	Listable bool   `json:"listable"`
+	// Targeted marks probes aimed at an endpoint the user gave explicitly
+	// (a full bucket URL), as opposed to the broad bare-name fan-out.
+	Targeted bool `json:"-"`
 }
 
 func findCmd() *cli.Command {
@@ -69,11 +76,13 @@ func findCmd() *cli.Command {
    - 完整桶 URL/路径（如 https://mybucket.s3.us-east-1.amazonaws.com/prefix
      或 s3://mybucket/key）→ 只探测该端点（更精确）
 
-探测方式：向桶发匿名 ListObjects 请求，一次请求同时判断
-   存在性 + 能否匿名列目录：
-   HTTP 200        → 存在且可匿名列目录（★ 亮绿高亮）
+探测方式：向桶发 ListObjects 请求，一次请求同时判断存在性 + 能否列目录。
+默认匿名探测；配置了凭证（--ak/--sk，STS 加 --token；或 OSS_*/AWS_* 环境变量、
+--profile，与 ls/cp 相同）时自动改为 SigV4 签名探测，可验证非匿名桶：
+   HTTP 200        → 存在且可列目录（匿名模式=可匿名列，亮绿★；签名模式=凭证可列）
    HTTP 3xx        → 存在（重定向）
-   HTTP 401/403    → 存在但私有（不可匿名列）
+   HTTP 401/403    → 匿名模式：存在但私有；签名模式：存在但拒绝访问
+                     （凭证本身被拒，如 InvalidAccessKeyId，则判为无法判断）
    HTTP 404/域名不存在 → 不存在
    超时/其它状态码   → 无法判断
 
@@ -85,6 +94,8 @@ func findCmd() *cli.Command {
    oss find mybucket --listable            只列出可匿名列目录的桶
    oss find mybucket -j                    NDJSON 输出
    oss find bucket-a bucket-b --export r.csv   导出 CSV（含 listable_url）
+   oss find mybucket --provider aliyun --ak LTAI... --sk ...   用凭证验证阿里云上的私有桶
+   OSS_ACCESS_KEY_ID=... OSS_SECRET_ACCESS_KEY=... oss find mybucket --provider tencent
 
 说明:
    - 默认只探测中国大陆+港台地域（--cn 显式指定同效）；--global 探测全部地域（含海外）；
@@ -95,7 +106,9 @@ func findCmd() *cli.Command {
    - 腾讯云桶名需含 APPID 后缀（如 mybucket-1250000000）
    - 不支持七牛：匿名访问一律返回 400，无法判断存在性；B2 恒返回 403、R2 需账号 ID，
      也都不在探测范围
-   - 探测为匿名请求，不发送任何凭证`,
+   - 默认匿名探测，不发送任何凭证；配置凭证后自动切换为签名探测——建议同时用
+     --provider 限定到凭证所属厂商（签名请求发给其它厂商只会被拒）；
+     --anonymous 可强制匿名探测`,
 			`oss find <bucket|URL> [...]  or  cat list.txt | oss find
 
 Batch: give multiple arguments, and/or pipe one entry per line via stdin
@@ -104,11 +117,17 @@ Batch: give multiple arguments, and/or pipe one entry per line via stdin
    - a full bucket URL/path (e.g. https://mybucket.s3.us-east-1.amazonaws.com/prefix
      or s3://mybucket/key) -> probe only that endpoint (more precise)
 
-Probing: an anonymous ListObjects request per bucket reveals both existence
-and anonymous-listability in a single request:
-   HTTP 200        -> exists AND anonymously listable (bright green)
+Probing: one ListObjects request per bucket reveals both existence and
+listability. Probes are anonymous by default; when credentials are configured
+(--ak/--sk, plus --token for STS; or OSS_*/AWS_* env vars, --profile — same
+as ls/cp) they switch to SigV4-signed probes, which can verify non-anonymous
+buckets:
+   HTTP 200        -> exists AND listable (anonymous mode: anonymously listable,
+                      bright green; signed mode: listable with the credentials)
    HTTP 3xx        -> exists (redirect)
-   HTTP 401/403    -> exists but private (not anonymously listable)
+   HTTP 401/403    -> anonymous mode: exists but private; signed mode: exists
+                      but denied (credentials themselves rejected, e.g.
+                      InvalidAccessKeyId, is treated as inconclusive)
    HTTP 404 / no such host -> not found
    timeout / other status  -> inconclusive
 
@@ -120,6 +139,8 @@ EXAMPLES:
    oss find mybucket --listable            list only anonymously listable buckets
    oss find mybucket -j                    NDJSON output
    oss find bucket-a bucket-b --export r.csv   export CSV (with listable_url)
+   oss find mybucket --provider aliyun --ak LTAI... --sk ...   verify a private Aliyun bucket with credentials
+   OSS_ACCESS_KEY_ID=... OSS_SECRET_ACCESS_KEY=... oss find mybucket --provider tencent
 
 NOTES:
    - By default only mainland-China + HK/TW regions are probed (--cn is the
@@ -134,7 +155,11 @@ NOTES:
    - Qiniu is not supported (anonymous requests always return 400, so existence
      cannot be determined); B2 always returns 403 and R2 needs an account ID,
      so none of these are probed
-   - Probes are anonymous; no credentials are ever sent`),
+   - Probes are anonymous by default and send no credentials; when credentials
+     are configured they switch to signed probing — combine with --provider to
+     restrict the scan to the provider the credentials belong to (signed
+     requests sent to other providers are simply rejected); --anonymous forces
+     anonymous probing`),
 		Flags:  flags,
 		Action: runFind,
 	}
@@ -167,7 +192,8 @@ func collectFindInputs(c *cli.Command) []string {
 }
 
 // buildFindJobs turns inputs into probe jobs. Bare bucket names fan out to
-// every known provider; full URLs/paths probe only the parsed endpoint.
+// every known provider (or only the --provider one when it is set); full
+// URLs/paths probe only the parsed endpoint.
 // global=true probes every region; otherwise only CN regions (mainland
 // China + HK/TW) are probed. regionOverride, when set, takes precedence.
 func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string, global bool) (jobs []findResult, invalid map[string]string) {
@@ -177,9 +203,11 @@ func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string, glob
 		name     string
 		region   string
 		url      string
+		targeted bool // endpoint given explicitly by the user (full URL input)
 	}
 	var js []job
 	invalid = map[string]string{}
+	onlyProvider := strings.ToLower(strings.TrimSpace(o.Provider))
 
 	for _, in := range inputs {
 		t, err := s3x.ParseTarget(in, o)
@@ -200,7 +228,7 @@ func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string, glob
 					name = u.Host
 				}
 			}
-			js = append(js, job{input: in, provider: prov, name: name, region: t.Region, url: root})
+			js = append(js, job{input: in, provider: prov, name: name, region: t.Region, url: root, targeted: true})
 			continue
 		}
 		// Bare bucket name: fan out to all providers.
@@ -209,6 +237,9 @@ func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string, glob
 			continue
 		}
 		for _, p := range s3x.ScanProbes {
+			if onlyProvider != "" && p.Provider != onlyProvider {
+				continue
+			}
 			if len(p.Regions) == 0 {
 				// Region-less probe (e.g. AWS international global endpoint,
 				// GCS, Yandex): only probed with --global and no --region.
@@ -239,6 +270,7 @@ func buildFindJobs(inputs []string, o *s3x.ConnOpts, regionOverride string, glob
 	for _, j := range js {
 		jobs = append(jobs, findResult{
 			Input: j.input, Provider: j.provider, Name: j.name, Region: j.region, URL: j.url,
+			Targeted: j.targeted,
 		})
 	}
 	return jobs, invalid
@@ -315,6 +347,105 @@ func classifyProbe(status int, body []byte) (state, detail string, listable bool
 	}
 }
 
+// emptySHA256 is the SHA-256 of an empty payload; SigV4-signed S3 requests
+// must carry it in X-Amz-Content-Sha256.
+var emptySHA256 = func() string {
+	h := sha256.Sum256(nil)
+	return hex.EncodeToString(h[:])
+}()
+
+// probeBucketSigned sends one SigV4-signed ListObjects request with the
+// provided credentials (AK/SK with an optional STS session token). This is
+// the credentialed counterpart of probeBucket: it can confirm buckets that
+// are not anonymously accessible.
+func probeBucketSigned(ctx context.Context, hc *http.Client, creds aws.Credentials, region, root string, targeted bool) (status int, state, detail string, listable bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL(root), nil)
+	if err != nil {
+		return 0, findUnknown, err.Error(), false
+	}
+	req.Header.Set("X-Amz-Content-Sha256", emptySHA256)
+	signRegion := region
+	if signRegion == "" {
+		signRegion = "us-east-1"
+	}
+	signer := v4.NewSigner()
+	if err := signer.SignHTTP(ctx, creds, req, emptySHA256, "s3", signRegion, time.Now()); err != nil {
+		return 0, findUnknown, err.Error(), false
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) {
+			return 0, findNotFound, T("域名不存在", "no such host"), false
+		}
+		if os.IsTimeout(err) || strings.Contains(err.Error(), "deadline") {
+			return 0, findUnknown, T("超时", "timeout"), false
+		}
+		return 0, findUnknown, T("连接失败", "connection failed"), false
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	state, detail, listable = classifySignedProbe(resp.StatusCode, body, targeted)
+	return resp.StatusCode, state, detail, listable
+}
+
+// classifySignedProbe interprets responses to credentialed probes. targeted
+// tells whether the probe was aimed at an endpoint the user chose explicitly
+// (--provider, or a full bucket URL): only then does a plain denial mean
+// "bucket exists but these credentials lack permission"; against the broad
+// bare-name fan-out a denial usually just means the credentials belong to
+// another provider, which reveals nothing about the bucket.
+func classifySignedProbe(status int, body []byte, targeted bool) (state, detail string, listable bool) {
+	// UCloud-style JSON RetCode responses.
+	if bytes.Contains(body, []byte("RetCode")) {
+		if bytes.Contains(body, []byte("bucket not exists")) || bytes.Contains(body, []byte("-148653")) {
+			return findNotFound, T("桶不存在", "bucket not exists"), false
+		}
+		if bytes.Contains(body, []byte("no authorization")) || bytes.Contains(body, []byte("-148643")) {
+			return findExists, T("存在·拒绝访问", "exists·denied"), false
+		}
+		return findUnknown, fmt.Sprintf("HTTP %d (RetCode)", status), false
+	}
+	switch {
+	case status == http.StatusOK || status == http.StatusNoContent:
+		if bytes.Contains(body, []byte("<Error>")) || bytes.Contains(body, []byte("AccessDenied")) ||
+			bytes.Contains(body, []byte("ErrMsg")) {
+			return findExists, T("存在·拒绝访问", "exists·denied"), false
+		}
+		return findListable, T("可列目录（凭证）", "listable (credentials)"), true
+	case status >= 300 && status < 400:
+		return findExists, T("存在（重定向）", "redirect"), false
+	case status == http.StatusNotFound:
+		return findNotFound, T("桶不存在", "no such bucket"), false
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		if credRejected(body) {
+			return findUnknown, T("凭证被拒（疑似不适用于该厂商）", "credentials rejected (likely wrong provider)"), false
+		}
+		if targeted {
+			return findExists, T("存在·拒绝访问", "exists·denied"), false
+		}
+		return findUnknown, T("拒绝访问", "denied"), false
+	default:
+		return findUnknown, fmt.Sprintf("HTTP %d", status), false
+	}
+}
+
+// credRejected reports whether an error body shows the credentials themselves
+// were rejected (invalid key / bad signature), as opposed to the request being
+// denied for an existing bucket. S3-compatible XML errors all carry a <Code>.
+func credRejected(body []byte) bool {
+	for _, code := range []string{
+		"InvalidAccessKeyId", "SignatureDoesNotMatch", "InvalidToken",
+		"ExpiredToken", "TokenRefreshRequired", "InvalidSecurity",
+		"AuthFailure", "UnrecognizedClientException", "RequestTimeTooSkewed",
+	} {
+		if bytes.Contains(body, []byte(code)) {
+			return true
+		}
+	}
+	return false
+}
+
 func runFind(ctx context.Context, c *cli.Command) error {
 	o := connOpts(c)
 
@@ -340,10 +471,37 @@ func runFind(ctx context.Context, c *cli.Command) error {
 		return errors.New(T("--cn 与 --global 不能同时使用", "--cn and --global are mutually exclusive"))
 	}
 	global := c.Bool("global") // default (and --cn): CN regions only
+	onlyProvider := strings.ToLower(strings.TrimSpace(o.Provider))
+	if onlyProvider != "" {
+		if _, ok := s3x.Providers[onlyProvider]; !ok {
+			return fmt.Errorf("%s (choose from: %s)",
+				fmt.Sprintf(T("未知厂商 %q", "unknown provider %q"), onlyProvider),
+				strings.Join(s3x.ProviderNames(), ", "))
+		}
+	}
+
+	// Resolve credentials once. find probes anonymously by default; when
+	// credentials are configured (--ak/--sk/--token, OSS_*/AWS_* env vars or
+	// --profile) it switches to SigV4-signed probes, which can also confirm
+	// non-anonymous buckets. --anonymous forces anonymous probing.
+	credProvider, anon, err := s3x.ResolveCredentials(ctx, o, regionOverride)
+	if err != nil {
+		return err
+	}
+	var creds aws.Credentials
+	if !anon {
+		creds, err = credProvider.Retrieve(ctx)
+		if err != nil {
+			return fmt.Errorf(T("无法获取凭证: %v", "failed to retrieve credentials: %v"), err)
+		}
+	}
 
 	results, invalid := buildFindJobs(inputs, o, regionOverride, global)
 	if len(results) == 0 && len(invalid) == len(inputs) {
 		return errors.New(T("没有可探测的输入", "no probeable inputs"))
+	}
+	if len(results) == 0 && onlyProvider != "" {
+		return errors.New(fmt.Sprintf(T("厂商 %q 没有可探测的端点", "provider %q has no probeable endpoints"), onlyProvider))
 	}
 
 	// Run all probes concurrently. In human mode, matches are streamed one
@@ -365,6 +523,11 @@ func runFind(ctx context.Context, c *cli.Command) error {
 	multi := len(inputs) > 1
 	var w *tabwriter.Writer
 	if human {
+		if !anon {
+			fmt.Fprintln(os.Stderr, cDim(T(
+				"使用提供的凭证进行签名探测（可验证非匿名桶）",
+				"signed probing with the provided credentials (can verify non-anonymous buckets)")))
+		}
 		w = tabwriter.NewWriter(os.Stdout, 1, 2, 2, ' ', 0)
 		// Invalid inputs are known up front; report them before probing.
 		for _, in := range inputs {
@@ -387,11 +550,19 @@ func runFind(ctx context.Context, c *cli.Command) error {
 		i := i
 		g.Go(func() error {
 			r := &results[i]
-			status, state, detail, listable := probeBucket(gctx, hc, r.URL)
+			var status int
+			var state, detail string
+			var listable bool
+			if anon {
+				status, state, detail, listable = probeBucket(gctx, hc, r.URL)
+			} else {
+				status, state, detail, listable = probeBucketSigned(gctx, hc, creds,
+					r.Region, r.URL, r.Targeted || onlyProvider != "")
+			}
 			mu.Lock()
 			r.Status, r.State, r.Detail, r.Listable = status, state, detail, listable
 			if human && isHit(state) {
-				mark, stateText := stateStyle(state)
+				mark, stateText := stateStyle(state, !anon)
 				region := ""
 				if r.Region != "" {
 					region = " @ " + r.Region
@@ -454,7 +625,12 @@ func runFind(ctx context.Context, c *cli.Command) error {
 				})
 			}
 		}
+		auth := "anonymous"
+		if !anon {
+			auth = "signed"
+		}
 		line, _ := sonic.Marshal(map[string]any{
+			"auth":               auth,
 			"inputs":             len(inputs),
 			"found":              found,
 			"anonymous_listable": listable,
@@ -466,16 +642,23 @@ func runFind(ctx context.Context, c *cli.Command) error {
 	// ---- Human-readable tail ----
 	// Matches already streamed during probing; print no-hit inputs and the
 	// anonymously-listable summary.
-	printFindTail(inputs, results, invalid, listableOnly)
+	printFindTail(inputs, results, invalid, listableOnly, !anon)
 	return nil
 }
 
 // stateStyle returns (marker, colored-state-text) for a result state.
-func stateStyle(state string) (string, string) {
+// signed selects the wording for credentialed probes.
+func stateStyle(state string, signed bool) (string, string) {
 	switch state {
 	case findListable:
+		if signed {
+			return cGreenBright("★"), cGreenBright(T("可列目录（凭证）", "listable (credentials)"))
+		}
 		return cGreenBright("★"), cGreenBright(T("可匿名列目录", "listable"))
 	case findExists:
+		if signed {
+			return cYellow("✓"), cYellow(T("存在·拒绝访问", "exists·denied"))
+		}
 		return cYellow("✓"), cYellow(T("存在·私有", "exists·private"))
 	case findNotFound:
 		return cGrey("✗"), cGrey(T("未发现", "not found"))
@@ -486,9 +669,9 @@ func stateStyle(state string) (string, string) {
 
 // printFindTail finishes the human-readable output: matches were already
 // streamed during probing, so this only reports inputs with no hits at all,
-// then prints the anonymously-listable summary. listableOnly selects the
-// wording for the no-hit line to match the active mode.
-func printFindTail(inputs []string, results []findResult, invalid map[string]string, listableOnly bool) {
+// then prints the listable summary. listableOnly and signed select wording
+// that matches the active mode.
+func printFindTail(inputs []string, results []findResult, invalid map[string]string, listableOnly, signed bool) {
 	byInput := make(map[string][]*findResult)
 	for i := range results {
 		r := &results[i]
@@ -498,8 +681,13 @@ func printFindTail(inputs []string, results []findResult, invalid map[string]str
 	noHitMsg := T("未在已知厂商中发现（可尝试 --global / --region 扩大范围）",
 		"not found on known providers (try --global / --region)")
 	if listableOnly {
-		noHitMsg = T("未发现可匿名列目录（桶可能不存在，或存在但私有）",
-			"not anonymously listable (bucket may not exist, or exists but is private)")
+		if signed {
+			noHitMsg = T("未发现可列目录（桶可能不存在，或凭证无权限）",
+				"not listable (bucket may not exist, or credentials lack permission)")
+		} else {
+			noHitMsg = T("未发现可匿名列目录（桶可能不存在，或存在但私有）",
+				"not anonymously listable (bucket may not exist, or exists but is private)")
+		}
 	}
 
 	multi := len(inputs) > 1
@@ -524,25 +712,30 @@ func printFindTail(inputs []string, results []findResult, invalid map[string]str
 	}
 	_ = w.Flush()
 
-	// Summary of anonymously listable buckets (the highlight).
+	// Summary of listable buckets (the highlight).
 	var listable []*findResult
 	for i := range results {
 		if results[i].Listable {
 			listable = append(listable, &results[i])
 		}
 	}
+	foundMsg := T("发现 %d 个可匿名列目录的桶:", "found %d anonymously listable bucket(s):")
+	noneMsg := T("未发现可匿名列目录的桶", "no anonymously listable bucket found")
+	if signed {
+		foundMsg = T("发现 %d 个可列目录的桶（使用提供的凭证）:", "found %d listable bucket(s) with the provided credentials:")
+		noneMsg = T("未发现可列目录的桶（凭证可能无权限）", "no listable bucket found (credentials may lack permission)")
+	}
 	fmt.Println()
 	if len(listable) > 0 {
 		fmt.Printf("%s %s\n", cGreenBright("★"),
-			cGreenBright(fmt.Sprintf(T("发现 %d 个可匿名列目录的桶:", "found %d anonymously listable bucket(s):"), len(listable))))
+			cGreenBright(fmt.Sprintf(foundMsg, len(listable))))
 		for _, r := range listable {
 			fmt.Printf("  %s %s\n", cGreenBright("★"), r.URL)
 			fmt.Printf("    %s %s\n", cDim(T("→ 可直接使用:", "→ ready to use:")),
 				fmt.Sprintf("oss ls %q", r.URL+"?delimiter=/"))
 		}
 	} else {
-		fmt.Printf("%s %s\n", cGrey("✗"),
-			T("未发现可匿名列目录的桶", "no anonymously listable bucket found"))
+		fmt.Printf("%s %s\n", cGrey("✗"), noneMsg)
 	}
 }
 

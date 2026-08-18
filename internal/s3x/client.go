@@ -176,6 +176,13 @@ func resolveCredentials(ctx context.Context, o *ConnOpts, region string) (aws.Cr
 	return aws.AnonymousCredentials{}, true, nil
 }
 
+// ResolveCredentials exposes credential resolution for callers that issue
+// their own HTTP requests instead of using the S3 client (e.g. find's
+// signed probes). The bool result reports whether access is anonymous.
+func ResolveCredentials(ctx context.Context, o *ConnOpts, region string) (aws.CredentialsProvider, bool, error) {
+	return resolveCredentials(ctx, o, region)
+}
+
 func firstEnv(keys ...string) string {
 	for _, k := range keys {
 		if v := os.Getenv(k); v != "" {
