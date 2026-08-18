@@ -297,11 +297,16 @@ noaa-nwm-pds
     → ready to use: oss ls "https://noaa-nwm-pds.s3.amazonaws.com?delimiter=/"
 ```
 
-Notes: only built-in common regions are probed (AWS/GCS globally); Tencent COS
-bucket names need the APPID suffix; B2/Qiniu cannot be probed anonymously and
-R2 needs an account ID, so they are excluded. Results are best-effort —
-"not found" is not a guarantee. Alias: `which` (a bucket security-check command
-is planned under the `scan`/`audit` name).
+Notes: every provider's **full set of public regions** is probed (AWS/GCS
+globally; Aliyun 32, Tencent 21, Huawei 29, UCloud 25, Kingsoft 9, Baidu 7,
+Qiniu 6, JD 5, etc.); Tencent COS bucket names need the APPID suffix
+(e.g. `examplebucket-1250000000`); **Qiniu** rejects anonymous requests with
+400 (auth required), so anonymous probes cannot distinguish existence there
+(results are indicative only), and its `bkt.clouddn.com` / `qiniudemo.com`
+addresses are CDN domains bound to buckets (not derivable from the bucket
+name); B2 returns 403 for every bucket and R2 needs an account ID, so both are
+excluded. Results are best-effort — "not found" is not a guarantee. Alias:
+`which` (a bucket security-check command is planned under the `scan`/`audit` name).
 
 ## Global connection flags
 

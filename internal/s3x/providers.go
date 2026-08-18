@@ -123,27 +123,56 @@ type ScanProbe struct {
 
 // ScanProbes covers every provider with a predictable bucket URL. Not
 // included: R2 (endpoint embeds an account ID), MinIO/custom (self-hosted),
-// Backblaze B2 (returns 403 for every bucket, so anonymous probes cannot
-// distinguish existing from non-existing), and Qiniu Kodo (rejects all
-// anonymous requests with a signature error).
+// and Backblaze B2 (returns 403 for every bucket, so anonymous probes cannot
+// distinguish existing from non-existing).
 var ScanProbes = []ScanProbe{
 	{Provider: "aws", Name: "AWS S3",
 		URLTemplate: "https://{bucket}.s3.amazonaws.com"}, // global endpoint, any region
 	{Provider: "aliyun", Name: "Aliyun OSS",
 		URLTemplate: "https://{bucket}.oss-{region}.aliyuncs.com",
-		Regions:     []string{"cn-hangzhou", "cn-beijing", "cn-shanghai"}},
+		Regions: []string{
+			"cn-hangzhou", "cn-shanghai", "cn-nanjing", "cn-fuzhou", "cn-wuhan-lr",
+			"cn-qingdao", "cn-beijing", "cn-zhangjiakou", "cn-huhehaote", "cn-wulanchabu",
+			"cn-shenzhen", "cn-heyuan", "cn-guangzhou", "cn-chengdu", "cn-zhongwei",
+			"cn-hongkong", "ap-northeast-1", "ap-northeast-2", "ap-southeast-1",
+			"ap-southeast-3", "ap-southeast-5", "ap-southeast-6", "ap-southeast-7",
+			"ap-southeast-8", "sa-east-1", "eu-central-1", "eu-west-1", "us-west-1",
+			"us-east-1", "na-south-1", "eu-west-2", "me-east-1",
+		}},
 	{Provider: "tencent", Name: "Tencent COS",
 		URLTemplate: "https://{bucket}.cos.{region}.myqcloud.com",
-		Regions:     []string{"ap-guangzhou", "ap-shanghai", "ap-beijing"}},
+		Regions: []string{
+			"ap-beijing-1", "ap-beijing", "ap-nanjing", "ap-shanghai", "ap-guangzhou",
+			"ap-chengdu", "ap-chongqing", "ap-shenzhen-fsi", "ap-shanghai-fsi",
+			"ap-beijing-fsi", "ap-hongkong", "ap-singapore", "ap-jakarta", "ap-seoul",
+			"ap-bangkok", "ap-tokyo", "me-saudi-arabia", "na-siliconvalley",
+			"na-ashburn", "sa-saopaulo", "eu-frankfurt",
+		}},
 	{Provider: "huawei", Name: "Huawei OBS",
 		URLTemplate: "https://{bucket}.obs.{region}.myhuaweicloud.com",
-		Regions:     []string{"cn-north-4", "cn-east-3"}},
+		Regions: []string{
+			"cn-north-1", "cn-north-2", "cn-north-4", "cn-north-9", "cn-north-11",
+			"cn-north-12", "cn-east-2", "cn-east-3", "cn-east-4", "cn-east-5",
+			"cn-south-1", "cn-south-2", "cn-south-4", "cn-southwest-2", "cn-southwest-3",
+			"ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4",
+			"ap-southeast-5", "af-south-1", "me-east-1", "tr-west-1", "ru-northwest-2",
+			"na-mexico-1", "la-north-2", "la-south-2", "sa-brazil-1", "sa-peru-1",
+		}},
+	{Provider: "qiniu", Name: "Qiniu Kodo",
+		URLTemplate: "https://{bucket}.s3-{region}.qiniucs.com",
+		Regions: []string{
+			"cn-east-1", "cn-east-2", "cn-north-1", "cn-south-1",
+			"us-north-1", "ap-southeast-1",
+		}},
 	{Provider: "baidu", Name: "Baidu BOS",
 		URLTemplate: "https://{bucket}.s3.{region}.bcebos.com",
-		Regions:     []string{"bj", "gz", "su"}},
+		Regions:     []string{"bj", "bd", "su", "gz", "hkg", "fwh", "fsh"}},
 	{Provider: "ks3", Name: "Kingsoft KS3",
 		URLTemplate: "https://{bucket}.ks3-{region}.ksyuncs.com",
-		Regions:     []string{"cn-beijing", "cn-shanghai"}},
+		Regions: []string{
+			"cn-beijing", "cn-shanghai", "cn-guangzhou", "cn-qinghai", "cn-qingyang",
+			"cn-ningxia", "sgp", "jr-beijing", "jr-shanghai",
+		}},
 	{Provider: "ucloud", Name: "UCloud US3",
 		URLTemplate: "https://{bucket}.{region}.ufileos.com",
 		Regions: []string{
@@ -154,7 +183,7 @@ var ScanProbes = []ScanProbe{
 		}},
 	{Provider: "jdcloud", Name: "JD Cloud OSS",
 		URLTemplate: "https://s3.{region}.jdcloud-oss.com/{bucket}",
-		Regions:     []string{"cn-north-1"}},
+		Regions:     []string{"cn-north-1", "cn-south-1", "cn-east-1", "cn-east-2", "eu-west-1"}},
 	{Provider: "scaleway", Name: "Scaleway Object Storage",
 		URLTemplate: "https://{bucket}.s3.{region}.scw.cloud",
 		Regions:     []string{"fr-par"}},
