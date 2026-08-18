@@ -61,7 +61,7 @@ var (
 	reGCSVHost       = regexp.MustCompile(`^(.+)\.storage\.googleapis\.com$`)
 
 	// smaller / regional providers
-	reUCloudVHost     = regexp.MustCompile(`^(.+)\.(s3-[a-z0-9-]+)\.ufileos\.com$`)
+	reUCloudVHost     = regexp.MustCompile(`^(.+)\.((?:s3-)?[a-z0-9][a-z0-9-]*)\.ufileos\.com$`)
 	reJDCloudEndpoint = regexp.MustCompile(`^s3\.([a-z0-9-]+)\.jdcloud-oss\.com$`)
 	reKS3VHost        = regexp.MustCompile(`^(.+)\.(ks3-[a-z0-9-]+)\.ksyuncs\.com$`)
 	reBaiduVHost      = regexp.MustCompile(`^(.+)\.s3\.([a-z0-9-]+)\.bcebos\.com$`)

@@ -109,3 +109,39 @@ func TestStateRank(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyProbeUCloudRetCode(t *testing.T) {
+	// UCloud returns JSON RetCode; private bucket (exists).
+	state, _, listable := classifyProbe(200, []byte(`{"RetCode":-148643, "ErrMsg":"no authorization found"}`))
+	if state != findExists || listable {
+		t.Errorf("UCloud no-authorization should be exists/private, got %q listable=%v", state, listable)
+	}
+	// UCloud bucket not exists.
+	state, _, listable = classifyProbe(200, []byte(`{"RetCode":-148653, "ErrMsg":"bucket not exists"}`))
+	if state != findNotFound || listable {
+		t.Errorf("UCloud bucket-not-exists should be notfound, got %q listable=%v", state, listable)
+	}
+}
+
+func TestClassifyProbeStandard(t *testing.T) {
+	cases := []struct {
+		status   int
+		body     string
+		state    string
+		listable bool
+	}{
+		{200, `<?xml version="1.0"?><ListBucketResult><Contents></Contents></ListBucketResult>`, findListable, true},
+		{200, `<Error><Code>AccessDenied</Code></Error>`, findExists, false},
+		{403, `<Error><Code>AccessDenied</Code></Error>`, findExists, false},
+		{404, `<Error><Code>NoSuchBucket</Code></Error>`, findNotFound, false},
+		{301, ``, findExists, false},
+		{500, ``, findUnknown, false},
+	}
+	for _, c := range cases {
+		state, _, listable := classifyProbe(c.status, []byte(c.body))
+		if state != c.state || listable != c.listable {
+			t.Errorf("classifyProbe(%d, %q) = (%q,%v), want (%q,%v)",
+				c.status, c.body, state, listable, c.state, c.listable)
+		}
+	}
+}

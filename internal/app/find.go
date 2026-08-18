@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -224,7 +225,9 @@ func probeURL(root string) string {
 }
 
 // probeBucket sends one anonymous ListObjects request and classifies the
-// outcome, returning existence + anonymous-listability together.
+// outcome, returning existence + anonymous-listability together. The response
+// body is read (up to 8 KiB) so provider-specific error formats (e.g. UCloud
+// JSON RetCode) can be parsed instead of relying on HTTP status alone.
 func probeBucket(ctx context.Context, hc *http.Client, root string) (status int, state, detail string, listable bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL(root), nil)
 	if err != nil {
@@ -242,19 +245,44 @@ func probeBucket(ctx context.Context, hc *http.Client, root string) (status int,
 		return 0, findUnknown, T("连接失败", "connection failed"), false
 	}
 	defer resp.Body.Close()
-	_, _ = io.CopyN(io.Discard, resp.Body, 512)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	state, detail, listable = classifyProbe(resp.StatusCode, body)
+	return resp.StatusCode, state, detail, listable
+}
 
+// classifyProbe interprets the HTTP status plus the response body. Some
+// providers (notably UCloud) answer bucket-level requests with a JSON body
+// carrying a RetCode instead of a meaningful HTTP status, so the body must be
+// inspected: RetCode -148653 / "bucket not exists" -> not found;
+// RetCode -148643 / "no authorization" -> exists but private.
+func classifyProbe(status int, body []byte) (state, detail string, listable bool) {
+	// UCloud-style JSON RetCode responses.
+	if bytes.Contains(body, []byte("RetCode")) {
+		if bytes.Contains(body, []byte("bucket not exists")) || bytes.Contains(body, []byte("-148653")) {
+			return findNotFound, T("桶不存在", "bucket not exists"), false
+		}
+		if bytes.Contains(body, []byte("no authorization")) || bytes.Contains(body, []byte("-148643")) {
+			return findExists, T("私有，不可匿名列", "private"), false
+		}
+		return findUnknown, fmt.Sprintf("HTTP %d (RetCode)", status), false
+	}
 	switch {
-	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent:
-		return resp.StatusCode, findListable, T("可匿名列目录", "anonymous list"), true
-	case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		return resp.StatusCode, findExists, T("存在（重定向）", "redirect"), false
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return resp.StatusCode, findExists, T("私有，不可匿名列", "private"), false
-	case resp.StatusCode == http.StatusNotFound:
-		return resp.StatusCode, findNotFound, T("桶不存在", "no such bucket"), false
+	case status == http.StatusOK || status == http.StatusNoContent:
+		// A 200 that is actually an error body (not a listing) means the
+		// bucket exists but is not anonymously listable.
+		if bytes.Contains(body, []byte("<Error>")) || bytes.Contains(body, []byte("AccessDenied")) ||
+			bytes.Contains(body, []byte("ErrMsg")) {
+			return findExists, T("私有，不可匿名列", "private"), false
+		}
+		return findListable, T("可匿名列目录", "anonymous list"), true
+	case status >= 300 && status < 400:
+		return findExists, T("存在（重定向）", "redirect"), false
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return findExists, T("私有，不可匿名列", "private"), false
+	case status == http.StatusNotFound:
+		return findNotFound, T("桶不存在", "no such bucket"), false
 	default:
-		return resp.StatusCode, findUnknown, fmt.Sprintf("HTTP %d", resp.StatusCode), false
+		return findUnknown, fmt.Sprintf("HTTP %d", status), false
 	}
 }
 

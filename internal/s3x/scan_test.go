@@ -102,6 +102,10 @@ func TestParseNewProviderHosts(t *testing.T) {
 		{"https://mybucket.s3.bj.bcebos.com/k", "baidu", "mybucket", "bj"},
 		{"https://s3.bj.bcebos.com/mybucket/k", "baidu", "mybucket", "bj"},
 		{"https://mybucket.s3.fr-par.scw.cloud/k", "scaleway", "mybucket", "fr-par"},
+		// UCloud standard UFile virtual-host format {bucket}.{region}.ufileos.com
+		{"https://maas-watermark-prod-new.cn-wlcb.ufileos.com/", "ucloud", "maas-watermark-prod-new", "cn-wlcb"},
+		// UCloud S3-compatible format {bucket}.s3-{region}.ufileos.com
+		{"https://mybucket.s3-cn-sh2.ufileos.com/k", "ucloud", "mybucket", "cn-sh2"},
 	}
 	for _, tc := range cases {
 		tgt, err := ParseTarget(tc.url, &ConnOpts{})
