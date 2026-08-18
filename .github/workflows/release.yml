@@ -69,10 +69,25 @@ jobs:
           sha256sum *.tar.gz *.zip > "oss-${VERSION}-checksums.txt"
           ls -lh
 
+      # 发布说明取自 tag 的注释内容（git tag -a 时写的正文），打 tag 时必须写更新内容。
+      - name: Extract release notes from tag message
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin >/dev/null 2>&1 || true
+          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "_该 tag 未附更新说明。/ No release notes provided for this tag._" > release-notes.md
+          fi
+          PREV="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$PREV" ]; then
+            printf '\n**Full Changelog**: https://github.com/ejfkdev/oss/compare/%s...%s\n' \
+              "$PREV" "${GITHUB_REF_NAME}" >> release-notes.md
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             dist/*.tar.gz
             dist/*.zip
