@@ -31,7 +31,7 @@ DigitalOcean Spaces, Yandex, Exoscale, Arvan Cloud, Backblaze B2, MinIO and any 
   listable buckets in bright green, with `--export` to txt/csv/xlsx/yaml/md including a
   dedicated `listable_url` field
 - 🔌 **Network access**: `oss serve` offers a REST API + OpenAPI 3 document + MCP tool
-  endpoint on one port; `oss mcp stdio|http|sse` exposes ls/stat/presign/find as MCP tools
+  endpoint on one port; `oss mcp stdio|http|sse` exposes ls/stat/cat/presign/find as MCP tools
   for clients like Claude
 - 🎨 **Terminal-friendly**: colored output on interactive terminals, plain text when piped
   (`--color auto|always|never`)
@@ -340,9 +340,10 @@ guarantee. Alias: `which` (a bucket security-check command is planned under the
 ### `oss serve` / `oss mcp` — network access (REST / OpenAPI / MCP)
 
 Built on [xyz-go](https://github.com/ejfkdev/xyz-go) (one definition, three
-interfaces), the four read-only commands `ls` / `stat` / `presign` / `find` are
-also exposed as an **HTTP REST API** and as **MCP tools** (`cat`/`cp` stream raw
-bytes or move files, so they stay CLI-only):
+interfaces), the read-only commands `ls` / `stat` / `cat` / `presign` / `find`
+are also exposed as an **HTTP REST API** and as **MCP tools**. `cat` serves raw
+bytes over HTTP (GET /cat) and a text/base64 MCP tool; only `cp` (file transfer)
+stays CLI-only:
 
 ```bash
 oss serve --addr 127.0.0.1:8080     # one port: REST + OpenAPI + /mcp
@@ -360,6 +361,7 @@ oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
 | Route | Usage |
 |---|---|
 | `GET /ls` | listing: `target` bucket/prefix (omit to list buckets); filters `prefix`, `delimiter` (default `/`, empty string = recursive flat), `recursive`, `dirs`, `files`, `include`, `exclude`; pagination `limit` (default 1000) + `next_token`; `all=true` for everything |
+| `GET /cat` | object content as a **raw byte stream** (not JSON): `target` + `range` (e.g. `0-1023`, same syntax as the CLI `--range`); a standard `Range` header works too; answers with `Content-Type`/`Content-Length`, and `206` + `Content-Range` on range reads |
 | `GET /stat` | `target` bucket connection info (kind=bucket) or object metadata (kind=object: size/modified/etag/content_type/storage_class/metadata) |
 | `GET /presign` | `target` + `method GET\|PUT` + `expires` (e.g. `15m`); anonymous requests get 401 |
 | `GET /find` | `inputs` repeats (`inputs=a&inputs=b`) + `provider`/`region`/`global`/`cn`/`listable`/`jobs`; returns per-probe states and the `anonymous_listable` URL list |
@@ -374,6 +376,13 @@ curl -s '127.0.0.1:8080/ls?target=https://noaa-nwm-pds.s3.amazonaws.com/&limit=2
 
 curl -s '127.0.0.1:8080/stat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html'
 # {"kind":"object",...,"size":31608,"modified":"2023-04-05T16:28:08Z","etag":"...","content_type":"text/html"}
+
+# raw byte stream: whole-object download / range reads (binary-safe)
+curl -s '127.0.0.1:8080/cat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html' \
+  -o index.html
+curl -sD - '127.0.0.1:8080/cat?target=s3://mybucket/data.bin&range=0-127' -o part.bin
+# HTTP/1.1 206 Partial Content
+# Content-Range: bytes 0-127/14334567
 ```
 
 **Credentials**: passed per request via headers (never in the URL or logs); when
@@ -398,8 +407,8 @@ shuts down gracefully (in-flight requests drain first).
 
 #### `oss mcp` — MCP tool server
 
-Exposes `ls` / `stat` / `presign` / `find` as MCP tools (tool names equal command
-names, with read-only annotations and inputSchema) for MCP-capable clients:
+Exposes `ls` / `stat` / `cat` / `presign` / `find` as MCP tools (tool names equal
+command names, with read-only annotations and inputSchema) for MCP-capable clients:
 
 ```bash
 oss mcp stdio                       # local process over stdio (recommended for local clients)
@@ -423,8 +432,11 @@ Client configuration example (Claude Desktop `claude_desktop_config.json`):
 
 MCP tool-call conventions: connection and target arguments are identical to the
 HTTP API (credentials go in tool arguments `ak`/`sk`/`token`); remote transports
-(http/sse) use `--bearer` tokens. `tools/list` returns the four tools; failed
+(http/sse) use `--bearer` tokens. `tools/list` returns the five tools; failed
 `tools/call` responses carry `isError: true` with the same classified message.
+The `cat` tool reads object content: UTF-8 text goes into the `text` field,
+binary into `base64` (one of the two), capped at 16MiB per call — for larger
+objects use HTTP `GET /cat` (raw byte stream) or the CLI `oss cat`.
 
 ## Global connection flags
 

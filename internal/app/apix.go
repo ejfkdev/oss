@@ -26,9 +26,12 @@ package app
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/ejfkdev/xyz-go/registry"
 	"github.com/ejfkdev/xyz-go/spec"
@@ -65,13 +68,46 @@ func connOptsFrom(ak, sk, token, profile, provider, endpoint, region, proxy, buc
 func BuildAPIRegistry() (*registry.Registry, error) {
 	reg := registry.New()
 	for _, fn := range []func(*registry.Registry) error{
-		registerApixLs, registerApixStat, registerApixPresign, registerApixFind,
+		registerApixLs, registerApixStat, registerApixPresign, registerApixFind, registerApixCat,
 	} {
 		if err := fn(reg); err != nil {
 			return nil, err
 		}
 	}
 	return reg, nil
+}
+
+// writeAPIError renders an API error as the standard JSON body with a mapped
+// HTTP status code — the same shape the xyz HTTP frontend produces.
+func writeAPIError(w http.ResponseWriter, anonymous bool, err error) {
+	status := errs.HTTPStatus(apixClassify(err))
+	msg := apixErr(anonymous, err).Error()
+	line, _ := sonic.Marshal(map[string]any{"error": msg})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(line)
+	_, _ = w.Write([]byte("\n"))
+}
+
+// connOptsFromRequest builds connection options for the raw (non-registry)
+// routes: credentials come from the X-Oss-* headers (never the URL), the other
+// connection parameters from same-named query params — the conventions
+// documented for the registry routes.
+func connOptsFromRequest(r *http.Request) *s3x.ConnOpts {
+	q := r.URL.Query()
+	boolQ := func(name string) bool {
+		v, _ := strconv.ParseBool(q.Get(name))
+		return v
+	}
+	d, _ := time.ParseDuration(q.Get("timeout"))
+	return &s3x.ConnOpts{
+		AK: r.Header.Get("X-Oss-Ak"), SK: r.Header.Get("X-Oss-Sk"),
+		Token: r.Header.Get("X-Oss-Token"), Profile: r.Header.Get("X-Oss-Profile"),
+		Provider: q.Get("provider"), Endpoint: q.Get("endpoint"), Region: q.Get("region"),
+		PathStyle: boolQ("path_style"), Bucket: q.Get("bucket"), Proxy: q.Get("proxy"),
+		Headers: q["headers"], Insecure: boolQ("insecure"), Timeout: d,
+		Anonymous: boolQ("anonymous"),
+	}
 }
 
 // apixErr annotates an S3-layer error for the HTTP/MCP interfaces: the human

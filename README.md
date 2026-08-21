@@ -26,7 +26,7 @@ DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
   支持桶名与完整桶 URL；匿名探测并同时识别**能否匿名列目录**，可匿名列目录的桶
   命令行亮绿 ★ 高亮，`--export` 导出含专门 `listable_url` 字段的 txt/csv/xlsx/yaml/md
 - 🔌 **对外服务**：`oss serve` 一个端口提供 REST API + OpenAPI 3 文档 + MCP 工具端点，
-  `oss mcp stdio|http|sse` 把 ls/stat/presign/find 作为 MCP 工具供 Claude 等客户端调用
+  `oss mcp stdio|http|sse` 把 ls/stat/cat/presign/find 作为 MCP 工具供 Claude 等客户端调用
 - 🎨 **终端友好**：交互式终端自动彩色高亮，管道/脚本场景自动输出纯文本（`--color auto|always|never`）
 - 🌍 **中英文帮助**：自动识别系统语言，中文环境显示中文帮助，其余显示英文（可用 `OSS_LANG=zh|en` 强制）
 - 📄 **大桶优化**：流式分页列举（常数内存）、NDJSON 流式输出、有界并发下载，百万级对象不占内存
@@ -311,8 +311,9 @@ APPID 后缀（如 `examplebucket-1250000000`）。**不支持七牛**：七牛�
 ### `oss serve` / `oss mcp` — 对外服务（REST / OpenAPI / MCP）
 
 基于 [xyz-go](https://github.com/ejfkdev/xyz-go)（一次定义、三个界面），`ls` / `stat` /
-`presign` / `find` 四个查询型命令同时对外提供 **HTTP REST** 与 **MCP 工具** 两种调用方式
-（`cat`/`cp` 属原始流式与文件传输，保持仅 CLI）：
+`cat` / `presign` / `find` 五个查询型命令同时对外提供 **HTTP REST** 与 **MCP 工具**
+两种调用方式。`cat` 在 HTTP 侧输出原始字节流（`GET /cat`）、在 MCP 侧提供 text/base64
+工具；仅 `cp`（文件传输）保持 CLI：
 
 ```bash
 oss serve --addr 127.0.0.1:8080     # 一个端口：REST + OpenAPI + /mcp
@@ -330,6 +331,7 @@ oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
 | 路由 | 用法 |
 |---|---|
 | `GET /ls` | 列举：`target` 桶/前缀目标（留空列桶），`prefix`、`delimiter`（默认 `/`，空串递归平铺）、`recursive`、`dirs`、`files`、`include`、`exclude` 过滤，`limit`（默认 1000）+ `next_token` 分页，`all=true` 全量 |
+| `GET /cat` | 读取对象内容：**原始字节流**（非 JSON），`target` + `range`（如 `0-1023`，与 CLI `--range` 同义）；也接受标准 `Range` 请求头；响应带 `Content-Type`/`Content-Length`，范围读取时 `206` + `Content-Range` |
 | `GET /stat` | `target` 桶连接信息（kind=bucket）或对象元数据（kind=object：size/modified/etag/content_type/storage_class/metadata） |
 | `GET /presign` | `target` + `method GET\|PUT` + `expires`（如 `15m`）生成预签名 URL；匿名返回 401 |
 | `GET /find` | `inputs` 可重复（`inputs=a&inputs=b`）+ `provider`/`region`/`global`/`cn`/`listable`/`jobs`；返回各探测状态与 `anonymous_listable` URL 列表 |
@@ -344,6 +346,13 @@ curl -s '127.0.0.1:8080/ls?target=https://noaa-nwm-pds.s3.amazonaws.com/&limit=2
 
 curl -s '127.0.0.1:8080/stat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html'
 # {"kind":"object",...,"size":31608,"modified":"2023-04-05T16:28:08Z","etag":"...","content_type":"text/html"}
+
+# 原始字节流：整对象下载 / 范围读取（二进制安全，落盘即用）
+curl -s '127.0.0.1:8080/cat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html' \
+  -o index.html
+curl -sD - '127.0.0.1:8080/cat?target=s3://mybucket/data.bin&range=0-127' -o part.bin
+# HTTP/1.1 206 Partial Content
+# Content-Range: bytes 0-127/14334567
 ```
 
 **凭证**：凭证走请求头（不进 URL，避免进日志），逐个请求传入；未传时回落服务进程的
@@ -365,8 +374,8 @@ curl -s -H 'X-Oss-Ak: LTAI...' -H 'X-Oss-Sk: ...' \
 
 #### `oss mcp` — MCP 工具服务器
 
-把 `ls` / `stat` / `presign` / `find` 暴露为 MCP 工具（工具名即命令名，带 read-only
-标注与 inputSchema），供支持 MCP 的客户端编排调用：
+把 `ls` / `stat` / `cat` / `presign` / `find` 暴露为 MCP 工具（工具名即命令名，带
+read-only 标注与 inputSchema），供支持 MCP 的客户端编排调用：
 
 ```bash
 oss mcp stdio                       # 本地进程标准输入/输出（本地客户端推荐）
@@ -389,8 +398,10 @@ oss mcp stdio --versions 2024-11-05,2025-06-18   # 限定协议版本
 ```
 
 MCP 工具调用约定：连接类与目标类参数和 HTTP 版完全一致（凭证直接作为工具参数
-`ak`/`sk`/`token` 传入）；远程（http/sse）用 `--bearer` 加令牌。`tools/list` 返回四个
-工具；`tools/call` 失败时以 `isError: true` 携带与 HTTP 相同的分类错误消息。
+`ak`/`sk`/`token` 传入）；远程（http/sse）用 `--bearer` 加令牌。`tools/list` 返回
+五个工具；`tools/call` 失败时以 `isError: true` 携带与 HTTP 相同的分类错误消息。
+`cat` 工具读取对象内容：UTF-8 文本放 `text` 字段、二进制放 `base64` 字段（二选一），
+单次上限 16MiB——更大的对象用 HTTP `GET /cat`（原始字节流）或 CLI `oss cat`。
 
 ## 全局连接参数
 

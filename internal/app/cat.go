@@ -49,21 +49,34 @@ EXAMPLES:
 }
 
 func runCat(ctx context.Context, c *cli.Command) error {
-	o := connOpts(c)
-	t, err := s3x.ParseTarget(c.Args().First(), o)
+	_, resp, err := catTarget(ctx, connOpts(c), c.Args().First(), c.String("range"))
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
+	_, err = io.Copy(os.Stdout, resp.Body)
+	return err
+}
+
+// catTarget fetches the object at target (optionally limited to rng, where a
+// missing "bytes=" prefix is added) and returns the client plus the open
+// response body. The caller owns the body and closes it; this is the shared
+// core of the CLI cat, the HTTP GET /cat raw stream and the MCP cat tool.
+func catTarget(ctx context.Context, o *s3x.ConnOpts, target, rng string) (*s3x.Client, *s3.GetObjectOutput, error) {
+	t, err := s3x.ParseTarget(target, o)
+	if err != nil {
+		return nil, nil, err
+	}
 	if t == nil || t.Bucket == "" || t.Key == "" {
-		return errors.New(T("用法: oss cat <桶/对象>", "usage: oss cat <bucket/object>"))
+		return nil, nil, errors.New(T("用法: oss cat <桶/对象>", "usage: oss cat <bucket/object>"))
 	}
 	cl, err := s3x.New(ctx, o, t)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	in := &s3.GetObjectInput{Bucket: aws.String(t.Bucket), Key: aws.String(t.Key)}
-	if r := strings.TrimSpace(c.String("range")); r != "" {
+	if r := strings.TrimSpace(rng); r != "" {
 		if !strings.HasPrefix(r, "bytes=") {
 			r = "bytes=" + r
 		}
@@ -72,9 +85,7 @@ func runCat(ctx context.Context, c *cli.Command) error {
 
 	resp, err := cl.S3.GetObject(ctx, in)
 	if err != nil {
-		return apiErr(err, cl.Anonymous)
+		return nil, nil, apiErr(err, cl.Anonymous)
 	}
-	defer resp.Body.Close()
-	_, err = io.Copy(os.Stdout, resp.Body)
-	return err
+	return cl, resp, nil
 }

@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/ejfkdev/xyz-go/httpapi"
 	"github.com/ejfkdev/xyz-go/mcp"
 	"github.com/urfave/cli/v3"
@@ -25,13 +29,15 @@ func serveCmd() *cli.Command {
 
 在同一端口提供:
    REST 路由      GET /ls /stat /presign /find（凭证走 X-Oss-Ak/X-Oss-Sk/X-Oss-Token 请求头）
+   RAW 字节流     GET /cat（对象内容原样输出，支持 range 范围读取）
    OpenAPI 文档   GET /openapi.json
    健康检查       GET /healthz
-   MCP            /mcp（MCP streamable HTTP 工具端点）
+   MCP            /mcp（MCP streamable HTTP 工具端点，工具含 cat）
 
 示例:
    oss serve --addr 127.0.0.1:8080
    curl -s '127.0.0.1:8080/ls?target=https://files.example.com/bucket/&prefix=logs/'
+   curl -s '127.0.0.1:8080/cat?target=s3://mybucket/app.log&range=0-1023'
    oss serve --addr :8443 --tls-cert cert.pem --tls-key key.pem --bearer s3cret
 
 说明:
@@ -42,13 +48,15 @@ func serveCmd() *cli.Command {
 
 Serves on one port:
    REST routes    GET /ls /stat /presign /find (credentials via X-Oss-Ak/X-Oss-Sk/X-Oss-Token headers)
+   RAW byte stream GET /cat (verbatim object content, range reads supported)
    OpenAPI doc    GET /openapi.json
    health probe   GET /healthz
-   MCP            /mcp (MCP streamable HTTP tool endpoint)
+   MCP            /mcp (MCP streamable HTTP tool endpoint; tools include cat)
 
 EXAMPLES:
    oss serve --addr 127.0.0.1:8080
    curl -s '127.0.0.1:8080/ls?target=https://files.example.com/bucket/&prefix=logs/'
+   curl -s '127.0.0.1:8080/cat?target=s3://mybucket/app.log&range=0-1023'
    oss serve --addr :8443 --tls-cert cert.pem --tls-key key.pem --bearer s3cret
 
 NOTES:
@@ -68,6 +76,52 @@ NOTES:
 	}
 }
 
+// rawCatHandler streams an object body verbatim — the raw byte stream the
+// JSON-only registry routes can't express. Range can come from the `range`
+// query param (same syntax as the CLI --range) or a standard Range header;
+// the S3 response's Content-Type/Content-Length/Content-Range (206 on range
+// reads) are passed through.
+func rawCatHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		target := q.Get("target")
+		rng := q.Get("range")
+		if rng == "" {
+			rng = r.Header.Get("Range")
+		}
+		if target == "" {
+			writeAPIError(w, false, errs.New(errs.KindInvalidInput,
+				T("缺少 target 参数：/cat?target=<桶/对象>", "missing target parameter: /cat?target=<bucket/object>")))
+			return
+		}
+		o := connOptsFromRequest(r)
+		_, resp, err := catTarget(r.Context(), o, target, rng)
+		if err != nil {
+			writeAPIError(w, o.Anonymous, err)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := aws.ToString(resp.ContentType)
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", ct)
+		if resp.ContentLength != nil && *resp.ContentLength >= 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(*resp.ContentLength, 10))
+		}
+		status := http.StatusOK
+		if rng != "" || aws.ToString(resp.ContentRange) != "" {
+			status = http.StatusPartialContent
+			if cr := aws.ToString(resp.ContentRange); cr != "" {
+				w.Header().Set("Content-Range", cr)
+			}
+		}
+		w.WriteHeader(status)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
 func runServe(ctx context.Context, c *cli.Command) error {
 	reg, err := BuildAPIRegistry()
 	if err != nil {
@@ -84,6 +138,7 @@ func runServe(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 	outer := http.NewServeMux()
+	outer.Handle("GET /cat", rawCatHandler())
 	outer.Handle("/mcp", mcpHandler)
 	outer.Handle("/", handler)
 	// Middleware chain (outermost first): CORS preflight (before auth, browser

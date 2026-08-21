@@ -18,8 +18,9 @@ func mcpCmd() *cli.Command {
 		Usage: T("启动 MCP 工具服务器（stdio/sse/http）", "start the MCP tool server (stdio/sse/http)"),
 		UsageText: T(`oss mcp <stdio|http|sse> [选项]
 
-把 ls / stat / presign / find 暴露为 MCP 工具（名称即命令名），
-供支持 MCP 的客户端（如 Claude 等）调用。
+把 ls / stat / cat / presign / find 暴露为 MCP 工具（名称即命令名），
+供支持 MCP 的客户端（如 Claude 等）调用。cat 读取对象内容：UTF-8 文本
+放 text 字段、二进制放 base64（二选一），单次上限 16MiB。
 
 示例:
    oss mcp stdio                             本地进程标准输入/输出（最常用）
@@ -38,8 +39,10 @@ func mcpCmd() *cli.Command {
    --session-timeout <DUR>  会话空闲超时（如 30m）`,
 			`oss mcp <stdio|http|sse> [options]
 
-Exposes ls / stat / presign / find as MCP tools (tool names = command names)
-for MCP-capable clients (Claude etc.).
+Exposes ls / stat / cat / presign / find as MCP tools (tool names = command
+names) for MCP-capable clients (Claude etc.). cat reads object content: UTF-8
+text goes into the text field, binary into base64 (one of the two), capped at
+16MiB per call.
 
 EXAMPLES:
    oss mcp stdio                             local process over stdio (most common)
