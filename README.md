@@ -25,6 +25,8 @@ DigitalOcean Spaces、Backblaze B2、MinIO 及其它 S3 兼容服务。
 - 🔍 **桶归属查找**：`find` 批量（命令行多个/标准输入）探测桶在哪个云存储，
   支持桶名与完整桶 URL；匿名探测并同时识别**能否匿名列目录**，可匿名列目录的桶
   命令行亮绿 ★ 高亮，`--export` 导出含专门 `listable_url` 字段的 txt/csv/xlsx/yaml/md
+- 🔌 **对外服务**：`oss serve` 一个端口提供 REST API + OpenAPI 3 文档 + MCP 工具端点，
+  `oss mcp stdio|http|sse` 把 ls/stat/presign/find 作为 MCP 工具供 Claude 等客户端调用
 - 🎨 **终端友好**：交互式终端自动彩色高亮，管道/脚本场景自动输出纯文本（`--color auto|always|never`）
 - 🌍 **中英文帮助**：自动识别系统语言，中文环境显示中文帮助，其余显示英文（可用 `OSS_LANG=zh|en` 强制）
 - 📄 **大桶优化**：流式分页列举（常数内存）、NDJSON 流式输出、有界并发下载，百万级对象不占内存
@@ -308,35 +310,87 @@ APPID 后缀（如 `examplebucket-1250000000`）。**不支持七牛**：七牛�
 
 ### `oss serve` / `oss mcp` — 对外服务（REST / OpenAPI / MCP）
 
-基于 [xyz-go](https://github.com/ejfkdev/xyz-go)（一次定义、三个界面），把
-`ls` / `stat` / `presign` / `find` 四个查询型命令以 **HTTP REST** 与 **MCP 工具**
-两种方式对外提供（`cat`/`cp` 属于原始流式与文件传输，保持仅 CLI）：
+基于 [xyz-go](https://github.com/ejfkdev/xyz-go)（一次定义、三个界面），`ls` / `stat` /
+`presign` / `find` 四个查询型命令同时对外提供 **HTTP REST** 与 **MCP 工具** 两种调用方式
+（`cat`/`cp` 属原始流式与文件传输，保持仅 CLI）：
 
 ```bash
-oss serve --addr 127.0.0.1:8080                       # 一个端口：REST + OpenAPI + MCP
-curl '127.0.0.1:8080/ls?target=https://bucket.s3.example.com/&limit=10&prefix=logs/'
-curl '127.0.0.1:8080/stat?target=s3://mybucket/file.gz'
-curl '127.0.0.1:8080/find?inputs=mybucket&provider=aliyun&global=true'
-curl '127.0.0.1:8080/openapi.json'                     # OpenAPI 3 文档
-curl '127.0.0.1:8080/healthz'                          # 健康检查
-oss mcp stdio                                          # MCP 工具服务器（stdio）
-oss mcp http --addr :9000 --bearer tok                 # MCP streamable HTTP
+oss serve --addr 127.0.0.1:8080     # 一个端口：REST + OpenAPI + /mcp
+oss mcp stdio                        # MCP 工具服务器（stdio，本地客户端）
+oss mcp http --addr :9000 --bearer tok    # MCP streamable HTTP（远程）
 ```
 
-| 路由 | 说明 |
-|---|---|
-| `GET /ls` | 列举桶/前缀；`limit`/`all`/`next_token` 分页，`prefix`/`delimiter`/`dirs`/`files`/`include`/`exclude` 过滤 |
-| `GET /stat` | 桶连接信息或对象元数据 |
-| `GET /presign` | 生成预签名 URL（需凭证） |
-| `GET /find` | 桶归属探测；`inputs` 可重复（`inputs=a&inputs=b`） |
-| `GET /openapi.json` | OpenAPI 3.0 文档 |
-| `GET /healthz` | 存活探针 |
-| `/mcp` | MCP streamable HTTP 工具端点（与 REST 同端口） |
+#### `oss serve` — HTTP/JSON 服务
 
-**信用与安全**：`serve` 默认不鉴权——请勿直接暴露公网；`--bearer tok` 开启 Bearer 校验、
-`--tls-cert/--tls-key` 启用 HTTPS、`--cors` 设置允许来源。凭证按请求传入：HTTP 用请求头
-`X-Oss-Ak`/`X-Oss-Sk`/`X-Oss-Token`/`X-Oss-Profile`（避免进 URL 日志），MCP 用工具参数；
-未提供时回落服务进程的环境变量/`~/.aws`。错误按统一分类映射为 HTTP 状态码（400/401/403/404/503）。
+```bash
+oss serve --addr 127.0.0.1:8080                       # 默认端口 :8080
+oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
+```
+
+| 路由 | 用法 |
+|---|---|
+| `GET /ls` | 列举：`target` 桶/前缀目标（留空列桶），`prefix`、`delimiter`（默认 `/`，空串递归平铺）、`recursive`、`dirs`、`files`、`include`、`exclude` 过滤，`limit`（默认 1000）+ `next_token` 分页，`all=true` 全量 |
+| `GET /stat` | `target` 桶连接信息（kind=bucket）或对象元数据（kind=object：size/modified/etag/content_type/storage_class/metadata） |
+| `GET /presign` | `target` + `method GET\|PUT` + `expires`（如 `15m`）生成预签名 URL；匿名返回 401 |
+| `GET /find` | `inputs` 可重复（`inputs=a&inputs=b`）+ `provider`/`region`/`global`/`cn`/`listable`/`jobs`；返回各探测状态与 `anonymous_listable` URL 列表 |
+| `GET /openapi.json` | OpenAPI 3.0 文档（含每个字段描述，可直接导入 Postman/Insomnia） |
+| `GET /healthz` | 存活探针，返回 `{"status":"ok"}` |
+
+```bash
+# 匿名列举公共桶，翻页直到 truncated=false（每页 500 条）
+curl -s '127.0.0.1:8080/ls?target=https://noaa-nwm-pds.s3.amazonaws.com/&limit=2'
+# {"target":"...","entries":[{"type":"prefix","key":"nwm.20250101/"},...],
+#  "shown":2,"next_token":"...","truncated":true}
+
+curl -s '127.0.0.1:8080/stat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html'
+# {"kind":"object",...,"size":31608,"modified":"2023-04-05T16:28:08Z","etag":"...","content_type":"text/html"}
+```
+
+**凭证**：凭证走请求头（不进 URL，避免进日志），逐个请求传入；未传时回落服务进程的
+环境变量 / `~/.aws` 共享配置：
+
+```bash
+curl -s -H 'X-Oss-Ak: LTAI...' -H 'X-Oss-Sk: ...' \
+  '127.0.0.1:8080/stat?target=oss://mybucket/file.gz&provider=aliyun'
+```
+
+会话型（STS 凭证）再加 `X-Oss-Token`。所有公共连接参数（`provider`/`endpoint`/`region`/
+`path_style`/`proxy`/`headers`/`insecure`/`timeout`）都可作为同名 query 参数或 headers 传入。
+
+**错误**：统一 `{"error":"..."}`，状态码映射按同一分类：参数/校验类 400、凭证无效或未提供
+401、权限不足 403、桶/对象不存在 404、上游不可达 503，展示异常 500。
+
+**安全**：默认**不鉴权**——只监听内部网络或必须配 `--bearer`；`--cors` 控制允许来源；
+`--timeout` 限制请求超时；收到 SIGINT/SIGTERM 时优雅关停（在飞请求先排空）。
+
+#### `oss mcp` — MCP 工具服务器
+
+把 `ls` / `stat` / `presign` / `find` 暴露为 MCP 工具（工具名即命令名，带 read-only
+标注与 inputSchema），供支持 MCP 的客户端编排调用：
+
+```bash
+oss mcp stdio                       # 本地进程标准输入/输出（本地客户端推荐）
+oss mcp http --addr :9000 --bearer tok    # streamable HTTP，供远程客户端
+oss mcp sse --addr 127.0.0.1:9000         # SSE 传输
+oss mcp stdio --versions 2024-11-05,2025-06-18   # 限定协议版本
+```
+
+客户端配置示例（Claude Desktop 的 `claude_desktop_config.json`）：
+
+```json
+{
+  "mcpServers": {
+    "oss": {
+      "command": "oss",
+      "args": ["mcp", "stdio"]
+    }
+  }
+}
+```
+
+MCP 工具调用约定：连接类与目标类参数和 HTTP 版完全一致（凭证直接作为工具参数
+`ak`/`sk`/`token` 传入）；远程（http/sse）用 `--bearer` 加令牌。`tools/list` 返回四个
+工具；`tools/call` 失败时以 `isError: true` 携带与 HTTP 相同的分类错误消息。
 
 ## 全局连接参数
 

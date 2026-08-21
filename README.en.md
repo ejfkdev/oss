@@ -30,6 +30,9 @@ DigitalOcean Spaces, Yandex, Exoscale, Arvan Cloud, Backblaze B2, MinIO and any 
   also detect **whether anonymous directory listing is allowed**, highlighting anonymously
   listable buckets in bright green, with `--export` to txt/csv/xlsx/yaml/md including a
   dedicated `listable_url` field
+- 🔌 **Network access**: `oss serve` offers a REST API + OpenAPI 3 document + MCP tool
+  endpoint on one port; `oss mcp stdio|http|sse` exposes ls/stat/presign/find as MCP tools
+  for clients like Claude
 - 🎨 **Terminal-friendly**: colored output on interactive terminals, plain text when piped
   (`--color auto|always|never`)
 - 🌍 **Bilingual help**: the system language is auto-detected — Chinese help in Chinese
@@ -342,33 +345,86 @@ also exposed as an **HTTP REST API** and as **MCP tools** (`cat`/`cp` stream raw
 bytes or move files, so they stay CLI-only):
 
 ```bash
-oss serve --addr 127.0.0.1:8080                       # one port: REST + OpenAPI + MCP
-curl '127.0.0.1:8080/ls?target=https://bucket.s3.example.com/&limit=10&prefix=logs/'
-curl '127.0.0.1:8080/stat?target=s3://mybucket/file.gz'
-curl '127.0.0.1:8080/find?inputs=mybucket&provider=aliyun&global=true'
-curl '127.0.0.1:8080/openapi.json'                     # OpenAPI 3 document
-curl '127.0.0.1:8080/healthz'                          # liveness probe
-oss mcp stdio                                          # MCP tool server over stdio
-oss mcp http --addr :9000 --bearer tok                 # MCP streamable HTTP
+oss serve --addr 127.0.0.1:8080     # one port: REST + OpenAPI + /mcp
+oss mcp stdio                        # MCP tool server over stdio (local clients)
+oss mcp http --addr :9000 --bearer tok    # MCP streamable HTTP (remote clients)
 ```
 
-| Route | Purpose |
-|---|---|
-| `GET /ls` | list buckets/prefixes; `limit`/`all`/`next_token` pagination plus `prefix`/`delimiter`/`dirs`/`files`/`include`/`exclude` filters |
-| `GET /stat` | bucket connection info or object metadata |
-| `GET /presign` | generate a pre-signed URL (credentials required) |
-| `GET /find` | bucket discovery; `inputs` repeats (`inputs=a&inputs=b`) |
-| `GET /openapi.json` | OpenAPI 3.0 document |
-| `GET /healthz` | liveness probe |
-| `/mcp` | MCP streamable HTTP tool endpoint (same port as REST) |
+#### `oss serve` — HTTP/JSON service
 
-**Credentials & security**: `serve` has no auth by default — do not expose it to
-the internet; `--bearer tok` enables Bearer verification, `--tls-cert/--tls-key`
-turns on HTTPS, `--cors` sets allowed origins. Credentials are passed per request:
-HTTP uses the `X-Oss-Ak` / `X-Oss-Sk` / `X-Oss-Token` / `X-Oss-Profile` headers
-(never in the URL), MCP uses tool arguments; when absent they fall back to the
-server process environment / `~/.aws`. Errors map to HTTP status codes through one
-taxonomy (400/401/403/404/503).
+```bash
+oss serve --addr 127.0.0.1:8080                       # default port :8080
+oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
+```
+
+| Route | Usage |
+|---|---|
+| `GET /ls` | listing: `target` bucket/prefix (omit to list buckets); filters `prefix`, `delimiter` (default `/`, empty string = recursive flat), `recursive`, `dirs`, `files`, `include`, `exclude`; pagination `limit` (default 1000) + `next_token`; `all=true` for everything |
+| `GET /stat` | `target` bucket connection info (kind=bucket) or object metadata (kind=object: size/modified/etag/content_type/storage_class/metadata) |
+| `GET /presign` | `target` + `method GET\|PUT` + `expires` (e.g. `15m`); anonymous requests get 401 |
+| `GET /find` | `inputs` repeats (`inputs=a&inputs=b`) + `provider`/`region`/`global`/`cn`/`listable`/`jobs`; returns per-probe states and the `anonymous_listable` URL list |
+| `GET /openapi.json` | OpenAPI 3.0 document (field descriptions included — importable into Postman/Insomnia) |
+| `GET /healthz` | liveness probe, answers `{"status":"ok"}` |
+
+```bash
+# list a public bucket anonymously, page until truncated=false
+curl -s '127.0.0.1:8080/ls?target=https://noaa-nwm-pds.s3.amazonaws.com/&limit=2'
+# {"target":"...","entries":[{"type":"prefix","key":"nwm.20250101/"},...],
+#  "shown":2,"next_token":"...","truncated":true}
+
+curl -s '127.0.0.1:8080/stat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html'
+# {"kind":"object",...,"size":31608,"modified":"2023-04-05T16:28:08Z","etag":"...","content_type":"text/html"}
+```
+
+**Credentials**: passed per request via headers (never in the URL or logs); when
+absent they fall back to the server process environment / `~/.aws`:
+
+```bash
+curl -s -H 'X-Oss-Ak: LTAI...' -H 'X-Oss-Sk: ...' \
+  '127.0.0.1:8080/stat?target=oss://mybucket/file.gz&provider=aliyun'
+```
+
+Add `X-Oss-Token` for STS credentials. Every common connection parameter
+(`provider`/`endpoint`/`region`/`path_style`/`proxy`/`headers`/`insecure`/`timeout`)
+works as a query parameter or header with the same name.
+
+**Errors**: uniform `{"error":"..."}` bodies; one taxonomy maps to status codes —
+400 invalid input, 401 missing/invalid credentials, 403 forbidden, 404 bucket/object
+not found, 503 upstream unreachable, 500 unexpected.
+
+**Security**: no auth by default — listen on internal networks only or set
+`--bearer`; `--cors` controls origins; `--timeout` caps requests; SIGINT/SIGTERM
+shuts down gracefully (in-flight requests drain first).
+
+#### `oss mcp` — MCP tool server
+
+Exposes `ls` / `stat` / `presign` / `find` as MCP tools (tool names equal command
+names, with read-only annotations and inputSchema) for MCP-capable clients:
+
+```bash
+oss mcp stdio                       # local process over stdio (recommended for local clients)
+oss mcp http --addr :9000 --bearer tok    # streamable HTTP for remote clients
+oss mcp sse --addr 127.0.0.1:9000         # SSE transport
+oss mcp stdio --versions 2024-11-05,2025-06-18   # pin protocol versions
+```
+
+Client configuration example (Claude Desktop `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "oss": {
+      "command": "oss",
+      "args": ["mcp", "stdio"]
+    }
+  }
+}
+```
+
+MCP tool-call conventions: connection and target arguments are identical to the
+HTTP API (credentials go in tool arguments `ak`/`sk`/`token`); remote transports
+(http/sse) use `--bearer` tokens. `tools/list` returns the four tools; failed
+`tools/call` responses carry `isError: true` with the same classified message.
 
 ## Global connection flags
 
