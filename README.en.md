@@ -269,8 +269,9 @@ Batch supported: give multiple arguments, and/or pipe one entry per line via std
 providers' common regions) or a **full bucket URL/path** (probes only that
 endpoint, more precise).
 
-Probing sends an **anonymous ListObjects request**, revealing both existence and
-anonymous-listability in a single request:
+Probing sends one **ListObjects request** per bucket (anonymous by default; automatically
+switched to SigV4-signed when credentials are configured, see below), revealing both
+existence and listability in a single request:
 
 | Response | Verdict |
 |---|---|
@@ -285,9 +286,23 @@ oss find mybucket                       # find a single bucket name
 oss find bucket-a bucket-b bucket-c     # batch (multiple arguments)
 cat buckets.txt | oss find              # batch (stdin, one per line)
 oss find https://mybucket.s3.us-east-1.amazonaws.com/   # full URL
+oss find mybucket --listable            # only anonymously listable buckets
 oss find mybucket --region cn-beijing   # probe only the given region
 oss find bucket-a bucket-b --export r.csv   # export CSV
+oss find mybucket --provider aliyun --ak LTAI... --sk ...   # verify a private bucket with credentials
 ```
+
+**Output shape**: only matches are printed; every hit is **streamed as one line** (with
+the full access URL) the moment it resolves — not-found/inconclusive probes stay hidden.
+**Two modes**: the default "find bucket storage" mode treats any existing bucket as a hit
+(private included); `--listable` prints only anonymously listable hits.
+
+**Credentialed probing**: probes are anonymous by default and send no credentials; when
+credentials are configured (`--ak/--sk`, `OSS_*`/`AWS_*` env vars or `--profile`) they
+switch to **SigV4-signed probing**, which can verify non-anonymous buckets (`--anonymous`
+forces anonymous). Credential rejections (`InvalidAccessKeyId` etc.) stay inconclusive to
+avoid false positives; a plain 403 counts as "exists but denied" only for targeted probes
+(`--provider` or a full bucket URL).
 
 **Export** (`--export`): format by extension `.txt .csv .xlsx .yaml .md`; includes a
 dedicated `listable_url` field, filled **only for anonymously listable buckets** with
@@ -318,6 +333,42 @@ the bucket name). B2 returns 403 for every bucket and R2 needs an account ID,
 so both are also excluded. Results are best-effort — "not found" is not a
 guarantee. Alias: `which` (a bucket security-check command is planned under the
 `scan`/`audit` name).
+
+### `oss serve` / `oss mcp` — network access (REST / OpenAPI / MCP)
+
+Built on [xyz-go](https://github.com/ejfkdev/xyz-go) (one definition, three
+interfaces), the four read-only commands `ls` / `stat` / `presign` / `find` are
+also exposed as an **HTTP REST API** and as **MCP tools** (`cat`/`cp` stream raw
+bytes or move files, so they stay CLI-only):
+
+```bash
+oss serve --addr 127.0.0.1:8080                       # one port: REST + OpenAPI + MCP
+curl '127.0.0.1:8080/ls?target=https://bucket.s3.example.com/&limit=10&prefix=logs/'
+curl '127.0.0.1:8080/stat?target=s3://mybucket/file.gz'
+curl '127.0.0.1:8080/find?inputs=mybucket&provider=aliyun&global=true'
+curl '127.0.0.1:8080/openapi.json'                     # OpenAPI 3 document
+curl '127.0.0.1:8080/healthz'                          # liveness probe
+oss mcp stdio                                          # MCP tool server over stdio
+oss mcp http --addr :9000 --bearer tok                 # MCP streamable HTTP
+```
+
+| Route | Purpose |
+|---|---|
+| `GET /ls` | list buckets/prefixes; `limit`/`all`/`next_token` pagination plus `prefix`/`delimiter`/`dirs`/`files`/`include`/`exclude` filters |
+| `GET /stat` | bucket connection info or object metadata |
+| `GET /presign` | generate a pre-signed URL (credentials required) |
+| `GET /find` | bucket discovery; `inputs` repeats (`inputs=a&inputs=b`) |
+| `GET /openapi.json` | OpenAPI 3.0 document |
+| `GET /healthz` | liveness probe |
+| `/mcp` | MCP streamable HTTP tool endpoint (same port as REST) |
+
+**Credentials & security**: `serve` has no auth by default — do not expose it to
+the internet; `--bearer tok` enables Bearer verification, `--tls-cert/--tls-key`
+turns on HTTPS, `--cors` sets allowed origins. Credentials are passed per request:
+HTTP uses the `X-Oss-Ak` / `X-Oss-Sk` / `X-Oss-Token` / `X-Oss-Profile` headers
+(never in the URL), MCP uses tool arguments; when absent they fall back to the
+server process environment / `~/.aws`. Errors map to HTTP status codes through one
+taxonomy (400/401/403/404/503).
 
 ## Global connection flags
 
@@ -412,10 +463,33 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 |---|---|---|
 | `--cn` | default behavior | probe only mainland-China + HK/TW regions |
 | `--global` | | probe all regions (including overseas) |
+| `--listable, -l` | | only anonymously listable buckets (hits stream as found; `-j`/`--export` follow the mode) |
 | `--region <R>` | | probe only the given region (overrides cn/global) |
 | `--jobs <N>` | all at once | concurrent probes |
-| `-j, --json` | | NDJSON output (one line per probe + a summary line with an anonymous_listable array) |
+| `-j, --json` | | NDJSON output (one line per probe + a summary line with an anonymous_listable array and the auth mode) |
 | `--export <file>` | | export results, format by extension `.txt .csv .xlsx .yaml .md`; includes a `listable_url` field holding full URLs of anonymously listable buckets |
+
+### `oss serve` — HTTP service
+
+| Flag | Default | Description |
+|---|---|---|
+| `--addr <ADDR>` | `:8080` | listen address |
+| `--bearer <TOK>` | no auth | bearer token(s), comma-separated, repeatable |
+| `--cors <LIST>` | | CORS allowed origins (`*` for any) |
+| `--timeout <d>` | none | read/write/idle timeout (a 10s header timeout always applies) |
+| `--tls-cert/--tls-key` | | enable HTTPS when both are given |
+
+### `oss mcp` — MCP tool server
+
+| Flag | Default | Description |
+|---|---|---|
+| transport | required | `stdio` \| `http` \| `sse` (first positional argument) |
+| `--addr <ADDR>` | `:8080` | listen address (http/sse) |
+| `--versions <LIST>` | all | pin MCP protocol versions (comma-separated) |
+| `--bearer/--cors` | | same as serve |
+| `--name/--server-version` | `oss`/version | server identity |
+| `--stateless/--json-response` | | streamable HTTP stateless / JSON answers |
+| `--session-timeout <d>` | none | idle session expiry |
 
 ### Common connection flags (all subcommands)
 
@@ -447,5 +521,6 @@ make tidy
 
 Main dependencies: [aws-sdk-go-v2](https://github.com/aws/aws-sdk-go-v2),
 [sonic](https://github.com/bytedance/sonic), [urfave/cli v3](https://github.com/urfave/cli),
+[xyz-go](https://github.com/ejfkdev/xyz-go) (serve/mcp network access),
 [progressbar/v3](https://github.com/schollz/progressbar),
 [go-humanize](https://github.com/dustin/go-humanize), [errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup).

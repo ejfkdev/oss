@@ -446,12 +446,45 @@ func credRejected(body []byte) bool {
 	return false
 }
 
-func runFind(ctx context.Context, c *cli.Command) error {
-	o := connOpts(c)
+// FindOptions parametrize a find run beyond the connection options.
+type FindOptions struct {
+	Jobs     int
+	Region   string
+	Global   bool
+	Cn       bool
+	Listable bool
+}
 
-	inputs := collectFindInputs(c)
+// findListableURL is one listable bucket in the report.
+type findListableURL struct {
+	Input    string `json:"input"`
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+	Region   string `json:"region,omitempty"`
+	URL      string `json:"url"`
+}
+
+// FindReport is the structured outcome of a find run — the shape served by
+// the HTTP/MCP interfaces; the CLI renders from it (streaming via onHit).
+type FindReport struct {
+	Auth              string            `json:"auth"` // anonymous | signed
+	Inputs            int               `json:"inputs"`
+	Found             int               `json:"found"`
+	Results           []findResult      `json:"results"`
+	Invalid           map[string]string `json:"invalid,omitempty"`
+	AnonymousListable []findListableURL `json:"anonymous_listable"`
+}
+
+// findTargets performs the whole find pipeline: input validation, credential
+// resolution, probe fan-out and aggregation. The callback hooks let the CLI
+// keep its streaming behavior: onInvalid fires for unparseable inputs before
+// probing, onSigned once when credentialed probing is active, and onHit for
+// every mode-relevant hit the moment its probe resolves (called from probe
+// goroutines; callers must synchronize their own output).
+func findTargets(ctx context.Context, o *s3x.ConnOpts, inputs []string, opt FindOptions,
+	onInvalid func(in, msg string), onSigned func(), onHit func(r *findResult, signed bool)) (*FindReport, error) {
 	if len(inputs) == 0 {
-		return errors.New(T(
+		return nil, errors.New(T(
 			"用法: oss find <桶名|URL> [...]（或 cat list.txt | oss find）",
 			"usage: oss find <bucket|URL> [...] (or: cat list.txt | oss find)"))
 	}
@@ -466,15 +499,13 @@ func runFind(ctx context.Context, c *cli.Command) error {
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	regionOverride := c.String("region")
-	if c.Bool("cn") && c.Bool("global") {
-		return errors.New(T("--cn 与 --global 不能同时使用", "--cn and --global are mutually exclusive"))
+	if opt.Cn && opt.Global {
+		return nil, errors.New(T("--cn 与 --global 不能同时使用", "--cn and --global are mutually exclusive"))
 	}
-	global := c.Bool("global") // default (and --cn): CN regions only
 	onlyProvider := strings.ToLower(strings.TrimSpace(o.Provider))
 	if onlyProvider != "" {
 		if _, ok := s3x.Providers[onlyProvider]; !ok {
-			return fmt.Errorf("%s (choose from: %s)",
+			return nil, fmt.Errorf("%s (choose from: %s)",
 				fmt.Sprintf(T("未知厂商 %q", "unknown provider %q"), onlyProvider),
 				strings.Join(s3x.ProviderNames(), ", "))
 		}
@@ -484,67 +515,47 @@ func runFind(ctx context.Context, c *cli.Command) error {
 	// credentials are configured (--ak/--sk/--token, OSS_*/AWS_* env vars or
 	// --profile) it switches to SigV4-signed probes, which can also confirm
 	// non-anonymous buckets. --anonymous forces anonymous probing.
-	credProvider, anon, err := s3x.ResolveCredentials(ctx, o, regionOverride)
+	credProvider, anon, err := s3x.ResolveCredentials(ctx, o, opt.Region)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var creds aws.Credentials
 	if !anon {
 		creds, err = credProvider.Retrieve(ctx)
 		if err != nil {
-			return fmt.Errorf(T("无法获取凭证: %v", "failed to retrieve credentials: %v"), err)
+			return nil, fmt.Errorf(T("无法获取凭证: %v", "failed to retrieve credentials: %v"), err)
+		}
+		if onSigned != nil {
+			onSigned()
 		}
 	}
 
-	results, invalid := buildFindJobs(inputs, o, regionOverride, global)
+	results, invalid := buildFindJobs(inputs, o, opt.Region, opt.Global)
 	if len(results) == 0 && len(invalid) == len(inputs) {
-		return errors.New(T("没有可探测的输入", "no probeable inputs"))
+		return nil, errors.New(T("没有可探测的输入", "no probeable inputs"))
 	}
 	if len(results) == 0 && onlyProvider != "" {
-		return errors.New(fmt.Sprintf(T("厂商 %q 没有可探测的端点", "provider %q has no probeable endpoints"), onlyProvider))
+		return nil, errors.New(fmt.Sprintf(T("厂商 %q 没有可探测的端点", "provider %q has no probeable endpoints"), onlyProvider))
+	}
+	if onInvalid != nil {
+		for _, in := range inputs {
+			if msg, bad := invalid[in]; bad {
+				onInvalid(in, msg)
+			}
+		}
 	}
 
-	// Run all probes concurrently. In human mode, matches are streamed one
-	// line per hit the moment each probe resolves — no waiting for the whole
-	// scan to finish, and probes that find nothing are never printed.
-	//
-	// Two modes: default finds bucket storage (exists OR listable hits);
-	// --listable finds only anonymously listable buckets.
-	listableOnly := c.Bool("listable")
+	// Run all probes concurrently. Two modes: default finds bucket storage
+	// (exists OR listable hits); --listable finds only listable buckets.
 	isHit := func(state string) bool {
-		if listableOnly {
+		if opt.Listable {
 			return state == findListable
 		}
 		return state == findListable || state == findExists
 	}
-	jsonOut := c.Bool("json")
-	exportPath := c.String("export")
-	human := !jsonOut && exportPath == ""
-	multi := len(inputs) > 1
-	var w *tabwriter.Writer
-	if human {
-		if !anon {
-			fmt.Fprintln(os.Stderr, cDim(T(
-				"使用提供的凭证进行签名探测（可验证非匿名桶）",
-				"signed probing with the provided credentials (can verify non-anonymous buckets)")))
-		}
-		w = tabwriter.NewWriter(os.Stdout, 1, 2, 2, ' ', 0)
-		// Invalid inputs are known up front; report them before probing.
-		for _, in := range inputs {
-			if msg, bad := invalid[in]; bad {
-				if multi {
-					fmt.Fprintf(w, "%s\t%s\t%s\n", cGrey("·"), in, cGrey(msg))
-				} else {
-					fmt.Fprintf(w, "%s\t%s\n", cGrey("·"), msg)
-				}
-			}
-		}
-		_ = w.Flush()
-	}
-	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
-	if n := c.Int("jobs"); n > 0 {
-		g.SetLimit(n)
+	if opt.Jobs > 0 {
+		g.SetLimit(opt.Jobs)
 	}
 	for i := range results {
 		i := i
@@ -559,80 +570,150 @@ func runFind(ctx context.Context, c *cli.Command) error {
 				status, state, detail, listable = probeBucketSigned(gctx, hc, creds,
 					r.Region, r.URL, r.Targeted || onlyProvider != "")
 			}
-			mu.Lock()
 			r.Status, r.State, r.Detail, r.Listable = status, state, detail, listable
-			if human && isHit(state) {
-				mark, stateText := stateStyle(state, !anon)
-				region := ""
-				if r.Region != "" {
-					region = " @ " + r.Region
-				}
-				if multi {
-					fmt.Fprintf(w, "%s\t%s\t%s%s\t%s\t%s\n",
-						mark, cGrey(r.Input), r.Name, region, stateText, r.URL)
-				} else {
-					fmt.Fprintf(w, "%s\t%s%s\t%s\t%s\n",
-						mark, r.Name, region, stateText, r.URL)
-				}
-				_ = w.Flush()
+			if onHit != nil && isHit(state) {
+				onHit(r, !anon)
 			}
-			mu.Unlock()
 			return nil
 		})
 	}
 	_ = g.Wait()
 
+	report := &FindReport{Inputs: len(inputs), Results: results, Invalid: invalid, Auth: "anonymous"}
+	if !anon {
+		report.Auth = "signed"
+	}
+	for i := range results {
+		r := &results[i]
+		if isHit(r.State) {
+			report.Found++
+		}
+		if r.Listable {
+			report.AnonymousListable = append(report.AnonymousListable, findListableURL{
+				Input: r.Input, Provider: r.Provider, Name: r.Name, Region: r.Region, URL: r.URL,
+			})
+		}
+	}
+	return report, nil
+}
+
+func runFind(ctx context.Context, c *cli.Command) error {
+	o := connOpts(c)
+
+	inputs := collectFindInputs(c)
+	if len(inputs) == 0 {
+		return errors.New(T(
+			"用法: oss find <桶名|URL> [...]（或 cat list.txt | oss find）",
+			"usage: oss find <bucket|URL> [...] (or: cat list.txt | oss find)"))
+	}
+	opt := FindOptions{
+		Jobs:     c.Int("jobs"),
+		Region:   c.String("region"),
+		Global:   c.Bool("global"),
+		Cn:       c.Bool("cn"),
+		Listable: c.Bool("listable"),
+	}
+
+	// ---- Output wiring: human mode streams hits as they resolve ----
+	jsonOut := c.Bool("json")
+	exportPath := c.String("export")
+	human := !jsonOut && exportPath == ""
+	multi := len(inputs) > 1
+	var (
+		w  *tabwriter.Writer
+		mu sync.Mutex
+	)
+	onInvalid := func(in, msg string) {
+		if !human {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if multi {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", cGrey("·"), in, cGrey(msg))
+		} else {
+			fmt.Fprintf(w, "%s\t%s\n", cGrey("·"), msg)
+		}
+		_ = w.Flush()
+	}
+	onSigned := func() {
+		if human {
+			fmt.Fprintln(os.Stderr, cDim(T(
+				"使用提供的凭证进行签名探测（可验证非匿名桶）",
+				"signed probing with the provided credentials (can verify non-anonymous buckets)")))
+		}
+	}
+	onHit := func(r *findResult, signed bool) {
+		if !human {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		mark, stateText := stateStyle(r.State, signed)
+		region := ""
+		if r.Region != "" {
+			region = " @ " + r.Region
+		}
+		if multi {
+			fmt.Fprintf(w, "%s\t%s\t%s%s\t%s\t%s\n",
+				mark, cGrey(r.Input), r.Name, region, stateText, r.URL)
+		} else {
+			fmt.Fprintf(w, "%s\t%s%s\t%s\t%s\n",
+				mark, r.Name, region, stateText, r.URL)
+		}
+		_ = w.Flush()
+	}
+	if human {
+		w = tabwriter.NewWriter(os.Stdout, 1, 2, 2, ' ', 0)
+	}
+
+	report, err := findTargets(ctx, o, inputs, opt, onInvalid, onSigned, onHit)
+	if err != nil {
+		return err
+	}
+	if human {
+		_ = w.Flush()
+	}
+
 	// ---- Export mode ----
-	if path := c.String("export"); path != "" {
-		out := results
-		if listableOnly {
+	if exportPath != "" {
+		out := report.Results
+		if opt.Listable {
 			out = nil
-			for _, r := range results {
+			for _, r := range report.Results {
 				if r.Listable {
 					out = append(out, r)
 				}
 			}
 		}
-		if err := exportFindResults(path, inputs, out, invalid); err != nil {
+		if err := exportFindResults(exportPath, inputs, out, report.Invalid); err != nil {
 			return err
 		}
 		fmt.Printf("%s %s\n", checkMarkStdout(),
-			fmt.Sprintf(T("已导出 %d 条探测结果 → %s", "exported %d probe result(s) → %s"), len(out), path))
+			fmt.Sprintf(T("已导出 %d 条探测结果 → %s", "exported %d probe result(s) → %s"), len(out), exportPath))
 		return nil
 	}
 
 	// ---- JSON mode ----
-	if c.Bool("json") {
-		for i := range results {
-			if listableOnly && !results[i].Listable {
+	if jsonOut {
+		for i := range report.Results {
+			if opt.Listable && !report.Results[i].Listable {
 				continue
 			}
-			line, _ := sonic.Marshal(&results[i])
+			line, _ := sonic.Marshal(&report.Results[i])
 			fmt.Println(string(line))
 		}
-		// Summary line with the dedicated anonymously-listable URL list.
-		listable := make([]map[string]any, 0)
-		found := 0
-		for i := range results {
-			r := &results[i]
-			if isHit(r.State) {
-				found++
-			}
-			if r.Listable {
-				listable = append(listable, map[string]any{
-					"input": r.Input, "provider": r.Provider, "name": r.Name,
-					"region": r.Region, "url": r.URL,
-				})
-			}
-		}
-		auth := "anonymous"
-		if !anon {
-			auth = "signed"
+		listable := make([]map[string]any, 0, len(report.AnonymousListable))
+		for _, l := range report.AnonymousListable {
+			listable = append(listable, map[string]any{
+				"input": l.Input, "provider": l.Provider, "name": l.Name,
+				"region": l.Region, "url": l.URL,
+			})
 		}
 		line, _ := sonic.Marshal(map[string]any{
-			"auth":               auth,
-			"inputs":             len(inputs),
-			"found":              found,
+			"auth":               report.Auth,
+			"inputs":             report.Inputs,
+			"found":              report.Found,
 			"anonymous_listable": listable,
 		})
 		fmt.Println(string(line))
@@ -640,9 +721,9 @@ func runFind(ctx context.Context, c *cli.Command) error {
 	}
 
 	// ---- Human-readable tail ----
-	// Matches already streamed during probing; print no-hit inputs and the
-	// anonymously-listable summary.
-	printFindTail(inputs, results, invalid, listableOnly, !anon)
+	// Matches already streamed during probing; print invalid/no-hit inputs
+	// and the anonymously-listable summary.
+	printFindTail(inputs, report.Results, report.Invalid, opt.Listable, report.Auth == "signed")
 	return nil
 }
 

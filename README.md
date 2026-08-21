@@ -251,7 +251,8 @@ oss presign s3://b/key --method PUT         # 上传链接
 支持批量：命令行给多个参数，和/或从 stdin 一行一个读取（可混用）。每个输入可以是
 **桶名**（并发探测所有已知厂商的常用区域）或**完整桶 URL/路径**（只探测该端点，更精确）。
 
-探测方式为向桶发**匿名 ListObjects 请求**，一次请求同时判断存在性 + 能否匿名列目录：
+探测方式为向桶发 **ListObjects 请求**（默认匿名；配置凭证时自动改为 SigV4 签名请求，见下），
+一次请求同时判断存在性 + 能否列目录：
 
 | 响应 | 判定 |
 |---|---|
@@ -266,9 +267,20 @@ oss find mybucket                       # 查找单个桶名
 oss find bucket-a bucket-b bucket-c     # 批量（命令行多个）
 cat buckets.txt | oss find              # 批量（stdin 一行一个）
 oss find https://mybucket.s3.us-east-1.amazonaws.com/   # 完整 URL
+oss find mybucket --listable            # 只列出可匿名列目录的桶
 oss find mybucket --region cn-beijing   # 只探测指定区域
 oss find bucket-a bucket-b --export r.csv   # 导出 CSV
+oss find mybucket --provider aliyun --ak LTAI... --sk ...   # 用凭证验证私有桶
 ```
+
+**输出形态**：只打印命中的结果，发现一个命中立即**流式打印一行**（含完整访问 URL），
+未命中/无法判断的探测不显示。**两种模式**：默认「发现桶存储」——桶存在即命中（含私有）；
+`--listable`「发现可匿名列目录的桶」——只输出可匿名列目录的命中。
+
+**凭证探测**：默认匿名探测、不发送任何凭证；配置了凭证（`--ak/--sk`、`OSS_*`/`AWS_*`
+环境变量或 `--profile`）时自动切换为 **SigV4 签名探测**，可验证非匿名桶；`--anonymous`
+强制匿名。凭证本身被拒（`InvalidAccessKeyId` 等）判为无法判断以防误报；只有明确目标
+（`--provider` 指定或完整桶 URL）的普通 403 才判为「存在·拒绝访问」。
 
 **导出**（`--export`）：格式按扩展名 `.txt .csv .xlsx .yaml .md`，包含专门字段
 `listable_url`，**仅对可匿名列目录的桶**填入其完整访问 URL，便于直接筛选可匿名列举的目标。
@@ -293,6 +305,38 @@ APPID 后缀（如 `examplebucket-1250000000`）。**不支持七牛**：七牛�
 `qiniudemo.com` 为绑定桶的 CDN 域名、无法从桶名推导。B2 对所有桶返回 403、R2 需账号 ID，
 也不在探测范围。结果为最佳判断，未找到不代表绝对不存在。别名：`which`（桶安全检测命令
 规划中，将使用 `scan`/`audit` 名称）。
+
+### `oss serve` / `oss mcp` — 对外服务（REST / OpenAPI / MCP）
+
+基于 [xyz-go](https://github.com/ejfkdev/xyz-go)（一次定义、三个界面），把
+`ls` / `stat` / `presign` / `find` 四个查询型命令以 **HTTP REST** 与 **MCP 工具**
+两种方式对外提供（`cat`/`cp` 属于原始流式与文件传输，保持仅 CLI）：
+
+```bash
+oss serve --addr 127.0.0.1:8080                       # 一个端口：REST + OpenAPI + MCP
+curl '127.0.0.1:8080/ls?target=https://bucket.s3.example.com/&limit=10&prefix=logs/'
+curl '127.0.0.1:8080/stat?target=s3://mybucket/file.gz'
+curl '127.0.0.1:8080/find?inputs=mybucket&provider=aliyun&global=true'
+curl '127.0.0.1:8080/openapi.json'                     # OpenAPI 3 文档
+curl '127.0.0.1:8080/healthz'                          # 健康检查
+oss mcp stdio                                          # MCP 工具服务器（stdio）
+oss mcp http --addr :9000 --bearer tok                 # MCP streamable HTTP
+```
+
+| 路由 | 说明 |
+|---|---|
+| `GET /ls` | 列举桶/前缀；`limit`/`all`/`next_token` 分页，`prefix`/`delimiter`/`dirs`/`files`/`include`/`exclude` 过滤 |
+| `GET /stat` | 桶连接信息或对象元数据 |
+| `GET /presign` | 生成预签名 URL（需凭证） |
+| `GET /find` | 桶归属探测；`inputs` 可重复（`inputs=a&inputs=b`） |
+| `GET /openapi.json` | OpenAPI 3.0 文档 |
+| `GET /healthz` | 存活探针 |
+| `/mcp` | MCP streamable HTTP 工具端点（与 REST 同端口） |
+
+**信用与安全**：`serve` 默认不鉴权——请勿直接暴露公网；`--bearer tok` 开启 Bearer 校验、
+`--tls-cert/--tls-key` 启用 HTTPS、`--cors` 设置允许来源。凭证按请求传入：HTTP 用请求头
+`X-Oss-Ak`/`X-Oss-Sk`/`X-Oss-Token`/`X-Oss-Profile`（避免进 URL 日志），MCP 用工具参数；
+未提供时回落服务进程的环境变量/`~/.aws`。错误按统一分类映射为 HTTP 状态码（400/401/403/404/503）。
 
 ## 全局连接参数
 
@@ -386,10 +430,33 @@ APPID 后缀（如 `examplebucket-1250000000`）。**不支持七牛**：七牛�
 |---|---|---|
 | `--cn` | 默认行为 | 只探测中国大陆+港台地域 |
 | `--global` | | 探测全部地域（含海外） |
+| `--listable, -l` | | 只输出可匿名列目录的桶（命中即流式打印；`-j`/`--export` 也跟随过滤） |
 | `--region <R>` | | 只探测指定区域（覆盖 cn/global） |
 | `--jobs <N>` | 全部并发 | 并发探测数 |
-| `-j, --json` | | NDJSON 输出（每个探测一行 + 汇总行，含 anonymous_listable 数组） |
+| `-j, --json` | | NDJSON 输出（每个探测一行 + 汇总行，含 anonymous_listable 数组与 auth 模式） |
 | `--export <file>` | | 导出结果，格式按扩展名 `.txt .csv .xlsx .yaml .md`；含 `listable_url` 字段存可匿名列桶的完整 URL |
+
+### `oss serve` — HTTP 服务
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--addr <ADDR>` | `:8080` | 监听地址 |
+| `--bearer <TOK>` | 不鉴权 | Bearer 令牌（逗号分隔可多次） |
+| `--cors <LIST>` | | CORS 允许来源（`*` 允许任意） |
+| `--timeout <d>` | 不限 | 读写/空闲超时（仍保留 10s 请求头超时） |
+| `--tls-cert/--tls-key` | | 同时给出时启用 HTTPS |
+
+### `oss mcp` — MCP 工具服务器
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| 传输 | 必填 | `stdio` \| `http` \| `sse`（第一个位置参数） |
+| `--addr <ADDR>` | `:8080` | 监听地址（http/sse） |
+| `--versions <LIST>` | 全部 | 限定 MCP 协议版本（逗号分隔） |
+| `--bearer/--cors` | | 同 serve |
+| `--name/--server-version` | `oss`/版本号 | 服务器标识 |
+| `--stateless/--json-response` | | 流式 HTTP 无状态 / JSON 应答 |
+| `--session-timeout <d>` | 不限 | 会话空闲超时 |
 
 ### 公共连接参数（所有子命令）
 
@@ -421,5 +488,6 @@ make tidy
 
 主要依赖：[aws-sdk-go-v2](https://github.com/aws/aws-sdk-go-v2)、
 [sonic](https://github.com/bytedance/sonic)、[urfave/cli v3](https://github.com/urfave/cli)、
+[xyz-go](https://github.com/ejfkdev/xyz-go)（serve/mcp 对外服务）、
 [progressbar/v3](https://github.com/schollz/progressbar)、
 [go-humanize](https://github.com/dustin/go-humanize)、[errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup)。

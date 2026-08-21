@@ -22,14 +22,55 @@ type listParams struct {
 	startAfter string
 }
 
+// listFlags carries the raw listing options independent of any CLI framework.
+// Pointer fields distinguish "explicitly set" from "left at default"
+// (the CLI's IsSet semantics), so both CLI and HTTP/MCP paths resolve the
+// same way.
+type listFlags struct {
+	recursive  bool
+	delimiter  *string
+	prefix     string
+	pageSize   *int64
+	startAfter string
+	dirsOnly   bool
+	filesOnly  bool
+	include    []string
+	exclude    []string
+}
+
+func int64Ptr(v int64) *int64 { return &v }
+
+// listFlagsFromCmd maps the ls CLI flags onto listFlags.
+func listFlagsFromCmd(c *cli.Command) listFlags {
+	f := listFlags{
+		recursive:  c.Bool("recursive"),
+		prefix:     c.String("prefix"),
+		startAfter: c.String("start-after"),
+		dirsOnly:   c.Bool("dirs"),
+		filesOnly:  c.Bool("files"),
+		include:    c.StringSlice("include"),
+		exclude:    c.StringSlice("exclude"),
+	}
+	if c.IsSet("delimiter") {
+		f.delimiter = aws.String(c.String("delimiter"))
+	}
+	if c.IsSet("page-size") && c.Int64("page-size") > 0 {
+		f.pageSize = int64Ptr(c.Int64("page-size"))
+	}
+	return f
+}
+
 func resolveListParams(c *cli.Command, t *s3x.Target) listParams {
-	// Delimiter resolution: -r > --delimiter flag > URL ?delimiter= > "/".
+	return resolveListParamsF(listFlagsFromCmd(c), t)
+}
+
+func resolveListParamsF(f listFlags, t *s3x.Target) listParams {
+	// Delimiter resolution: recursive > explicit delimiter > URL ?delimiter= > "/".
 	var delim *string
 	switch {
-	case c.Bool("recursive"):
-	case c.IsSet("delimiter"):
-		v := c.String("delimiter")
-		delim = &v
+	case f.recursive:
+	case f.delimiter != nil:
+		delim = f.delimiter
 	case t.List.Delimiter != nil:
 		delim = t.List.Delimiter
 	default:
@@ -41,17 +82,17 @@ func resolveListParams(c *cli.Command, t *s3x.Target) listParams {
 		delimStr = *delim
 	}
 
-	prefix := t.Key + t.List.Prefix + c.String("prefix")
+	prefix := t.Key + t.List.Prefix + f.prefix
 
 	var maxKeys *int32
-	if c.IsSet("page-size") && c.Int64("page-size") > 0 {
-		v := int32(min(c.Int64("page-size"), math.MaxInt32))
+	if f.pageSize != nil {
+		v := int32(min(*f.pageSize, math.MaxInt32))
 		maxKeys = &v
 	} else if t.List.MaxKeys > 0 {
 		maxKeys = &t.List.MaxKeys
 	}
 
-	startAfter := c.String("start-after")
+	startAfter := f.startAfter
 	if startAfter == "" {
 		startAfter = t.List.StartAfter
 	}
@@ -105,10 +146,14 @@ type entryFilter struct {
 }
 
 func newEntryFilter(c *cli.Command, p listParams) entryFilter {
+	return newEntryFilterF(listFlagsFromCmd(c), p)
+}
+
+func newEntryFilterF(f listFlags, p listParams) entryFilter {
 	return entryFilter{
-		dirsOnly:  c.Bool("dirs"),
-		filesOnly: c.Bool("files"),
-		glob:      newFilter(c.StringSlice("include"), c.StringSlice("exclude")),
+		dirsOnly:  f.dirsOnly,
+		filesOnly: f.filesOnly,
+		glob:      newFilter(f.include, f.exclude),
 		prefix:    p.prefix,
 		delim:     p.delim,
 	}
@@ -206,6 +251,61 @@ func walkEntriesFresh(ctx context.Context, cl *s3x.Client, t *s3x.Target, p list
 		}
 		if !pg.Truncated || pg.NextToken == "" {
 			return nil
+		}
+		token = pg.NextToken
+	}
+}
+
+// listWindow fetches a single paginated listing window starting at token:
+// at most limit matching entries, or the complete listing when all is true.
+// No cache interaction (safe under concurrent use). It reports the
+// continuation token and whether more entries may exist beyond the window.
+func listWindow(ctx context.Context, cl *s3x.Client, t *s3x.Target, p listParams, ef entryFilter,
+	limit int64, all bool, token string) (entries []cachedEntry, nextToken string, truncated bool, err error) {
+	useV1 := false
+	first := true
+	for {
+		if ctx.Err() != nil {
+			return nil, "", false, ctx.Err()
+		}
+		var pg *s3x.Page
+		if useV1 {
+			marker := token
+			if marker == "" {
+				marker = t.List.Marker
+			}
+			pg, err = s3x.ListV1(ctx, cl.S3, p.v1Input(t.Bucket, marker))
+		} else {
+			pg, err = s3x.ListV2(ctx, cl.S3, p.v2Input(t.Bucket, token))
+			if err != nil && first && s3x.V2Unsupported(err) {
+				useV1 = true
+				first = false
+				continue
+			}
+		}
+		first = false
+		if err != nil {
+			return nil, "", false, err
+		}
+		pageEntries := pageToEntries(pg)
+		visibleLeft := 0
+		for _, e := range pageEntries {
+			if ef.visible(e) {
+				visibleLeft++
+			}
+		}
+		for _, e := range pageEntries {
+			if !ef.visible(e) {
+				continue
+			}
+			visibleLeft--
+			entries = append(entries, e)
+			if !all && int64(len(entries)) >= limit {
+				return entries, pg.NextToken, pg.Truncated || visibleLeft > 0, nil
+			}
+		}
+		if !pg.Truncated || pg.NextToken == "" {
+			return entries, "", false, nil
 		}
 		token = pg.NextToken
 	}

@@ -15,8 +15,12 @@ import (
 // RepoURL is the project homepage shown in help and version output.
 const RepoURL = "https://github.com/ejfkdev/oss"
 
+// apiVersion is the running version, exposed for the MCP server identity.
+var apiVersion = "dev"
+
 // New builds the root CLI command.
 func New(version string) *cli.Command {
+	apiVersion = version
 	// `oss --version`
 	cli.VersionPrinter = func(cmd *cli.Command) {
 		v := cmd.Version
@@ -50,6 +54,8 @@ func New(version string) *cli.Command {
 			cpCmd(),
 			presignCmd(),
 			findCmd(),
+			serveCmd(),
+			mcpCmd(),
 		},
 	}
 }
@@ -109,6 +115,8 @@ func printRootHelp(w io.Writer, version string) {
 		{"cp", T("传输文件：下载 / 上传 / 跨桶拷贝（并行分片、过滤条件）", "Transfer files: download / upload / cross-bucket copy (parallel multipart, filters)")},
 		{"presign", T("生成对象的预签名 URL", "Generate a pre-signed URL for an object")},
 		{"find", T("查找桶名存在于哪些云存储服务（桶归属探测，输出访问 URL）", "Find which cloud storage services host a bucket name (prints access URLs)")},
+		{"serve", T("启动 HTTP 服务：REST 路由 + OpenAPI + /mcp 工具端点", "Start the HTTP service: REST routes + OpenAPI + /mcp tool endpoint")},
+		{"mcp", T("启动 MCP 工具服务器（stdio / sse / http）", "Start the MCP tool server (stdio / sse / http)")},
 	}, cCyan, "  "))
 
 	printSection(&b, T("常用示例", "EXAMPLES"), renderRows([][2]string{
@@ -123,6 +131,8 @@ func printRootHelp(w io.Writer, version string) {
 		{`oss cat s3://mybucket/config.yaml --range 0-1023`, T("查看对象片段", "View a byte range of an object")},
 		{`oss presign s3://mybucket/file.tar.gz --expires 1h`, T("生成 1 小时有效的预签名链接", "Generate a presigned URL valid for 1h")},
 		{`oss find mybucket`, T("查找该桶名存在于哪些云存储（输出访问 URL）", "Discover which cloud providers host this bucket name (prints access URLs)")},
+		{`oss serve --addr :8080 --bearer tok`, T("一键对外提供 REST / OpenAPI / MCP 服务", "Serve REST + OpenAPI + MCP on one port")},
+		{`oss mcp stdio`, T("MCP 工具服务器（stdio，供 Claude 等客户端调用）", "MCP tool server over stdio (for Claude and other clients)")},
 	}, cCyan, "  "))
 
 	printSection(&b, T("目标写法", "TARGET SYNTAX"), renderRows([][2]string{

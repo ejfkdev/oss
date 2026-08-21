@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/urfave/cli/v3"
 
 	"github.com/ejfkdev/oss/internal/s3x"
@@ -43,50 +44,57 @@ EXAMPLES:
 NOTE: presigning requires credentials (--ak/--sk, env or --profile);
 anonymous is not supported. Anyone holding the URL can access it until expiry.`),
 		Flags:  flags,
-		Action:    runPresign,
+		Action: runPresign,
 	}
 }
 
 func runPresign(ctx context.Context, c *cli.Command) error {
-	o := connOpts(c)
-	t, err := s3x.ParseTarget(c.Args().First(), o)
+	url, err := presignTarget(ctx, connOpts(c), c.Args().First(),
+		strings.ToUpper(c.String("method")), c.Duration("expires"))
 	if err != nil {
 		return err
 	}
+	fmt.Println(url)
+	return nil
+}
+
+// presignTarget produces a pre-signed URL for the object at target.
+func presignTarget(ctx context.Context, o *s3x.ConnOpts, target, method string, expires time.Duration) (string, error) {
+	t, err := s3x.ParseTarget(target, o)
+	if err != nil {
+		return "", err
+	}
 	if t == nil || t.Bucket == "" || t.Key == "" {
-		return errors.New(T("用法: oss presign <桶/对象>", "usage: oss presign <bucket/object>"))
+		return "", errors.New(T("用法: oss presign <桶/对象>", "usage: oss presign <bucket/object>"))
 	}
 	cl, err := s3x.New(ctx, o, t)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if cl.Anonymous {
-		return errors.New(T("预签名需要凭证（--ak/--sk、环境变量或 --profile）",
+		return "", errs.New(errs.KindUnauthorized, T("预签名需要凭证（--ak/--sk、环境变量或 --profile）",
 			"presigning requires credentials (--ak/--sk, env or --profile)"))
 	}
 
-	expires := c.Duration("expires")
 	pc := s3.NewPresignClient(cl.S3)
-
-	switch strings.ToUpper(c.String("method")) {
+	switch method {
 	case "GET", "":
 		res, err := pc.PresignGetObject(ctx,
 			&s3.GetObjectInput{Bucket: aws.String(t.Bucket), Key: aws.String(t.Key)},
 			s3.WithPresignExpires(expires))
 		if err != nil {
-			return err
+			return "", err
 		}
-		fmt.Println(res.URL)
+		return res.URL, nil
 	case "PUT":
 		res, err := pc.PresignPutObject(ctx,
 			&s3.PutObjectInput{Bucket: aws.String(t.Bucket), Key: aws.String(t.Key)},
 			s3.WithPresignExpires(expires))
 		if err != nil {
-			return err
+			return "", err
 		}
-		fmt.Println(res.URL)
+		return res.URL, nil
 	default:
-		return fmt.Errorf("unsupported --method %q (want GET or PUT)", c.String("method"))
+		return "", fmt.Errorf("unsupported --method %q (want GET or PUT)", method)
 	}
-	return nil
 }
