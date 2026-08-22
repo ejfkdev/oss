@@ -111,12 +111,12 @@ func cliColorMiddleware(_ context.Context, _ *cli.ExecContext, args map[string]a
 // Non-coded handler errors are wrapped as internal so runtime failures keep
 // the pre-migration exit code (1); usage errors (unknown flags, positional
 // counts) never reach this middleware and still exit 2, per xyz semantics.
-func cliOutputMiddleware(_ context.Context, ec *cli.ExecContext, args map[string]any, _ func() error) error {
+func cliOutputMiddleware(ctx context.Context, ec *cli.ExecContext, args map[string]any, _ func() error) error {
 	args["CLI"] = true
 	if ec.JSON {
 		args["JSON"] = true
 	}
-	_, err := ec.Entry.Invoke(context.Background(), args)
+	_, err := ec.Entry.Invoke(ctx, args)
 	if err != nil {
 		var ce *errs.CodedError
 		if !errors.As(err, &ce) {

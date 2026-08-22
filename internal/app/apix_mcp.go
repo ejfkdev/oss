@@ -32,7 +32,8 @@ func registerCliMCP(reg *registry.Registry) error {
 		Description(T("把 ls / stat / cat / presign / find 暴露为 MCP 工具（名称即命令名），供支持 MCP 的客户端（如 Claude）调用。cat 读取对象内容：UTF-8 文本放 text 字段、二进制放 base64，单次上限 16MiB。",
 			"Exposes ls/stat/cat/presign/find as MCP tools (tool names = command names) for MCP-capable clients (Claude etc.). cat reads content: UTF-8 text in the text field, binary in base64, capped at 16MiB.")).
 		CLI(spec.CliHints{
-			Usage: "mcp <stdio|http|sse>",
+			Usage:  "mcp <stdio|http|sse>",
+			Daemon: true,
 			After: T(`示例:
    oss mcp stdio                             本地进程标准输入/输出（最常用）
    oss mcp http --addr :9000 --bearer tok    远程 streamable HTTP

@@ -38,7 +38,8 @@ func registerCliServe(reg *registry.Registry) error {
 		Description(T("一个端口提供 REST 路由、/openapi.json、/healthz 与 /mcp（MCP streamable HTTP）。默认不鉴权。",
 			"One port serves the REST routes, /openapi.json, /healthz and /mcp (MCP streamable HTTP). No auth by default.")).
 		CLI(spec.CliHints{
-			Usage: "serve [--addr :8080]",
+			Usage:  "serve [--addr :8080]",
+			Daemon: true,
 			After: T(`示例:
    oss serve --addr 127.0.0.1:8080
    curl -s '127.0.0.1:8080/ls?target=https://files.example.com/bucket/&prefix=logs/'

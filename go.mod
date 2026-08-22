@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/smithy-go v1.27.6
 	github.com/dustin/go-humanize v1.0.1
-	github.com/ejfkdev/xyz-go v0.3.1
+	github.com/ejfkdev/xyz-go v0.3.2
 	github.com/mattn/go-isatty v0.0.24
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/xuri/excelize/v2 v2.11.0
