@@ -155,3 +155,15 @@ func padDisplay(s string, width int) string {
 	}
 	return s
 }
+
+// parseColorPref maps a --color value onto a color mode.
+func parseColorPref(s string) colorMode {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "always", "yes", "true", "1":
+		return colorAlways
+	case "never", "no", "false", "0":
+		return colorNever
+	default:
+		return colorAuto
+	}
+}

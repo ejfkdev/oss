@@ -51,6 +51,21 @@ func xyzMCPRead() spec.MCPHints {
 	return spec.MCPHints{Annotations: []string{"read"}}
 }
 
+// apixConnShortcuts merges the standard connection shorthands (-e/-x/-H/-k,
+// matching the pre-migration CLI) into a per-command CliFieldHint map.
+func apixConnShortcuts(extra map[string]spec.CliFieldHint) map[string]spec.CliFieldHint {
+	m := map[string]spec.CliFieldHint{
+		"endpoint": {Shorthand: "e"},
+		"proxy":    {Shorthand: "x"},
+		"headers":  {Shorthand: "H"},
+		"insecure": {Shorthand: "k"},
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
 // mcpInstructions is the usage note shown to MCP clients right after
 // initialization (the "help" of the MCP surface).
 var mcpInstructions = T(`5 个工具：ls 列举、stat 元数据、presign 预签名、find 桶归属探测、cat 读内容。

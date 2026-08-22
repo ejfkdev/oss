@@ -286,12 +286,12 @@ existence and listability in a single request:
 
 ```bash
 oss find mybucket                       # find a single bucket name
-oss find bucket-a bucket-b bucket-c     # batch (multiple arguments)
+oss find bucket-a --inputs bucket-b --inputs bucket-c   # batch (repeatable --inputs; or stdin, one per line)
 cat buckets.txt | oss find              # batch (stdin, one per line)
 oss find https://mybucket.s3.us-east-1.amazonaws.com/   # full URL
 oss find mybucket --listable            # only anonymously listable buckets
 oss find mybucket --region cn-beijing   # probe only the given region
-oss find bucket-a bucket-b --export r.csv   # export CSV
+oss find bucket-a --inputs bucket-b --export r.csv   # export CSV
 oss find mybucket --provider aliyun --ak LTAI... --sk ...   # verify a private bucket with credentials
 ```
 
@@ -360,7 +360,7 @@ oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
 
 | Route | Usage |
 |---|---|
-| `GET /ls` | listing: `target` bucket/prefix (omit to list buckets); filters `prefix`, `delimiter` (default `/`, empty string = recursive flat), `recursive`, `dirs`, `files`, `include`, `exclude`; pagination `limit` (default 1000) + `next_token`; `all=true` for everything |
+| `GET /ls` | listing: `target` bucket/prefix (omit to list buckets); filters `prefix`, `delimiter` (default `/`, empty string = recursive flat), `recursive`, `dirs`, `files`, `include`, `exclude`; pagination `limit` (default 1000) + `next-token`; `all=true` for everything |
 | `GET /cat` | object content as a **raw byte stream** (not JSON): `target` + `range` (e.g. `0-1023`, same syntax as the CLI `--range`); a standard `Range` header works too; answers with `Content-Type`/`Content-Length`, and `206` + `Content-Range` on range reads |
 | `GET /stat` | `target` bucket connection info (kind=bucket) or object metadata (kind=object: size/modified/etag/content_type/storage_class/metadata) |
 | `GET /presign` | `target` + `method GET\|PUT` + `expires` (e.g. `15m`); anonymous requests get 401 |
@@ -372,7 +372,7 @@ oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
 # list a public bucket anonymously, page until truncated=false
 curl -s '127.0.0.1:8080/ls?target=https://noaa-nwm-pds.s3.amazonaws.com/&limit=2'
 # {"target":"...","entries":[{"type":"prefix","key":"nwm.20250101/"},...],
-#  "shown":2,"next_token":"...","truncated":true}
+#  "shown":2,"next-token":"...","truncated":true}
 
 curl -s '127.0.0.1:8080/stat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html'
 # {"kind":"object",...,"size":31608,"modified":"2023-04-05T16:28:08Z","etag":"...","content_type":"text/html"}
@@ -394,7 +394,7 @@ curl -s -H 'X-Oss-Ak: LTAI...' -H 'X-Oss-Sk: ...' \
 ```
 
 Add `X-Oss-Token` for STS credentials. Every common connection parameter
-(`provider`/`endpoint`/`region`/`path_style`/`proxy`/`headers`/`insecure`/`timeout`)
+(`provider`/`endpoint`/`region`/`path-style`/`proxy`/`headers`/`insecure`/`timeout`)
 works as a query parameter or header with the same name.
 
 **Errors**: uniform `{"error":"..."}` bodies; one taxonomy maps to status codes —
@@ -530,6 +530,7 @@ No dedicated flags (object → size/etag/type/custom metadata; bucket → reacha
 
 | Flag | Default | Description |
 |---|---|---|
+| --inputs <V> | repeatable | extra inputs (first positional, the rest via --inputs or stdin) |
 | `--cn` | default behavior | probe only mainland-China + HK/TW regions |
 | `--global` | | probe all regions (including overseas) |
 | `--listable, -l` | | only anonymously listable buckets (hits stream as found; `-j`/`--export` follow the mode) |

@@ -7,14 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mattn/go-isatty"
 	"github.com/schollz/progressbar/v3"
-	"github.com/urfave/cli/v3"
 )
-
-func progressEnabled(c *cli.Command) bool {
-	return !c.Bool("no-progress") && isatty.IsTerminal(os.Stderr.Fd())
-}
 
 // newBar creates a determinate progress bar for single-file transfers.
 func newBar(size int64, desc string) *progressbar.ProgressBar {
@@ -30,7 +24,9 @@ func newBar(size int64, desc string) *progressbar.ProgressBar {
 
 // progressWriter feeds a progress bar from concurrent multipart writes.
 type progressWriter struct {
-	w   interface{ WriteAt([]byte, int64) (int, error) }
+	w interface {
+		WriteAt([]byte, int64) (int, error)
+	}
 	bar *progressbar.ProgressBar
 }
 

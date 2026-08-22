@@ -2,16 +2,14 @@
 // providers (AWS S3, Aliyun OSS, Tencent COS, Huawei OBS, Baidu BOS, Kingsoft
 // KS3, UCloud US3, JD Cloud OSS, GCS, Cloudflare R2, MinIO, ...). It supports
 // anonymous buckets, URL-style targets with query filtering, AK/SK/STS auth,
-// streaming pagination and parallel downloads.
+// streaming pagination and parallel downloads — through a CLI, an HTTP REST
+// service (oss serve) and an MCP tool server (oss mcp).
 package main
 
 import (
-	"context"
 	"os"
-	"os/signal"
 	"runtime/debug"
 	"strings"
-	"syscall"
 
 	"github.com/ejfkdev/oss/internal/app"
 )
@@ -33,11 +31,5 @@ func version() string {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := app.New(version()).Run(ctx, os.Args); err != nil {
-		app.PrintError(err)
-		os.Exit(1)
-	}
+	os.Exit(app.Run(version(), os.Args[1:]))
 }

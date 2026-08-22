@@ -9,7 +9,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/urfave/cli/v3"
+	"github.com/ejfkdev/xyz-go/registry"
+	"github.com/ejfkdev/xyz-go/spec"
 
 	"github.com/ejfkdev/oss/internal/s3x"
 )
@@ -32,37 +33,72 @@ type StatResult struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
-func statCmd() *cli.Command {
-	flags := connFlags()
-	return &cli.Command{
-		Name:  "stat",
-		Usage: T("查看桶或对象的元数据", "show bucket or object metadata"),
-		UsageText: T(`oss stat <目标>
+// apixStatArgs follows the canonical connection fields documented in apix.go.
+type apixStatArgs struct {
+	AK        string        `json:"ak,omitempty" desc:"访问密钥 ID / access key id" secret:"true" http:"header" httpName:"X-Oss-Ak"`
+	SK        string        `json:"sk,omitempty" desc:"访问密钥 / secret key" secret:"true" http:"header" httpName:"X-Oss-Sk"`
+	Token     string        `json:"token,omitempty" desc:"STS 会话令牌 / session token" secret:"true" http:"header" httpName:"X-Oss-Token"`
+	Profile   string        `json:"profile,omitempty" desc:"AWS 共享配置 profile / shared config profile" http:"header" httpName:"X-Oss-Profile"`
+	Anonymous bool          `json:"anonymous,omitempty" desc:"强制匿名访问 / force anonymous"`
+	Provider  string        `json:"provider,omitempty" desc:"云厂商 / provider"`
+	Endpoint  string        `json:"endpoint,omitempty" desc:"自定义 S3 端点 / custom endpoint"`
+	Region    string        `json:"region,omitempty" desc:"地域 / region"`
+	PathStyle bool          `json:"path-style,omitempty" desc:"路径风格寻址 / path-style addressing"`
+	Bucket    string        `json:"bucket,omitempty" desc:"桶名（配合 provider 使用）/ bucket name"`
+	Proxy     string        `json:"proxy,omitempty" desc:"HTTP(S) 代理 / proxy"`
+	Headers   []string      `json:"headers,omitempty" desc:"附加请求头，Key: Value / extra headers"`
+	Insecure  bool          `json:"insecure,omitempty" desc:"跳过 TLS 校验 / skip TLS verification"`
+	Timeout   time.Duration `json:"timeout,omitempty" desc:"请求超时，如 15s / request timeout"`
 
-示例:
-   oss stat s3://mybucket/file.tar.gz             查看对象元数据（大小/etag/类型/自定义 metadata）
-   oss stat s3://mybucket                         验证桶可达性，显示连接信息
-   oss stat https://files.example.com/bucket/key  URL 方式查看
-   oss stat s3://mybucket/file.tar.gz --provider aliyun --ak <AK> --sk <SK>
-                                                  指定厂商与凭证`,
-			`oss stat <target>
-
-EXAMPLES:
-   oss stat s3://mybucket/file.tar.gz             show object metadata (size/etag/type/custom metadata)
-   oss stat s3://mybucket                         check bucket reachability and connection info
-   oss stat https://files.example.com/bucket/key  query via URL
-   oss stat s3://mybucket/file.tar.gz --provider aliyun --ak <AK> --sk <SK>
-                                                  with explicit provider and credentials`),
-		Flags:  flags,
-		Action: runStat,
-	}
+	Target string `json:"target,omitempty" desc:"目标桶或对象（s3://… 或 URL）/ target bucket or object" cli:"positional"`
+	Color  string `json:"color,omitempty" desc:"彩色输出 auto|always|never（仅 CLI）" default:"auto"`
+	JSON   bool   `json:"-"`
+	CLI    bool   `json:"-"`
 }
 
-func runStat(ctx context.Context, c *cli.Command) error {
-	res, err := statTarget(ctx, connOpts(c), c.Args().First())
+func registerApixStat(reg *registry.Registry) error {
+	_, err := spec.Define("stat", apixStat).
+		Summary(T("查看桶或对象的元数据", "show bucket or object metadata")).
+		Description(T("返回目标桶的连接信息，或对象的大小、修改时间、ETag、Content-Type、存储类型与自定义元数据。",
+			"Returns connection info for a bucket target, or size / modified / etag / content-type / storage-class / custom metadata for an object.")).
+		CLI(spec.CliHints{
+			Usage:  "stat <target>",
+			Fields: apixConnShortcuts(nil),
+			After: T(`示例:
+   oss stat s3://mybucket/file.tar.gz             查看对象元数据（大小/etag/类型/自定义 metadata）
+   oss stat s3://mybucket                         验证桶可达性，显示连接信息
+   oss stat https://bucket.s3.us-east-1.amazonaws.com/key  URL 方式查看`,
+				`EXAMPLES:
+   oss stat s3://mybucket/file.tar.gz             show object metadata (size/etag/type/custom metadata)
+   oss stat s3://mybucket                         check bucket reachability and connection info
+   oss stat https://bucket.s3.us-east-1.amazonaws.com/key  query via URL`),
+		}).
+		HTTP(xyzHintsGET("/stat")).
+		MCP(xyzMCPRead()).
+		Register(reg)
+	return err
+}
+
+func apixStat(ctx context.Context, in *apixStatArgs) (*StatResult, error) {
+	o := connOptsFrom(in.AK, in.SK, in.Token, in.Profile, in.Provider, in.Endpoint, in.Region,
+		in.Proxy, in.Bucket, in.Anonymous, in.PathStyle, in.Insecure, in.Headers, in.Timeout)
+	res, err := statTarget(ctx, o, in.Target)
 	if err != nil {
-		return err
+		if in.CLI {
+			return nil, err
+		}
+		return nil, apixErr(o.Anonymous, err)
 	}
+	if in.CLI {
+		renderStat(res)
+		return nil, nil
+	}
+	return res, nil
+}
+
+// renderStat prints the metadata in the pre-migration labeled layout
+// (colored, display-width-aligned, CJK-aware).
+func renderStat(res *StatResult) {
 	lab := statLabel()
 	if res.Kind == "bucket" {
 		fmt.Printf("%s %s\n", lab(T("bucket:", "bucket:")), cGreen(res.Bucket))
@@ -70,7 +106,7 @@ func runStat(ctx context.Context, c *cli.Command) error {
 		fmt.Printf("%s %s\n", lab(T("端点:", "endpoint:")), res.Endpoint)
 		fmt.Printf("%s %s\n", lab(T("区域:", "region:")), res.Region)
 		fmt.Printf("%s %v\n", lab(T("匿名:", "anonymous:")), res.Anonymous)
-		return nil
+		return
 	}
 	size := int64(0)
 	if res.Size != nil {
@@ -100,7 +136,6 @@ func runStat(ctx context.Context, c *cli.Command) error {
 			fmt.Printf("  %s %s\n", cCyan(k+":"), res.Metadata[k])
 		}
 	}
-	return nil
 }
 
 // statTarget resolves target and fetches bucket or object metadata.

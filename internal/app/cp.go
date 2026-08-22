@@ -12,38 +12,59 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/urfave/cli/v3"
+	"github.com/ejfkdev/xyz-go/registry"
+	"github.com/ejfkdev/xyz-go/spec"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ejfkdev/oss/internal/s3x"
 )
 
-func cpCmd() *cli.Command {
-	flags := append([]cli.Flag{
-		// ---- scope & filters ----
-		&cli.BoolFlag{Name: "recursive", Aliases: []string{"r"}, Usage: T("按前缀/目录递归拷贝", "copy recursively by prefix/directory")},
-		&cli.StringSliceFlag{Name: "include", Usage: T("glob 包含过滤，可重复（匹配相对路径或文件名）", "glob include filter, repeatable (matches relative path or base name)")},
-		&cli.StringSliceFlag{Name: "exclude", Usage: T("glob 排除过滤，可重复（如 *.tmp）", "glob exclude filter, repeatable (e.g. *.tmp)")},
-		&cli.BoolFlag{Name: "skip-existing", Usage: T("目标已存在则跳过", "skip files that already exist at the destination")},
-		// ---- concurrency ----
-		&cli.IntFlag{Name: "jobs", Value: 16, Usage: T("并发文件数", "parallel file transfers")},
-		&cli.IntFlag{Name: "parallel", Value: 5, Usage: T("单文件分片并发数（multipart）", "parallel parts per file (multipart)")},
-		// ---- output ----
-		&cli.BoolFlag{Name: "no-progress", Usage: T("关闭进度显示", "disable progress output")},
-	}, connFlags()...)
-	return &cli.Command{
-		Name:  "cp",
-		Usage: T("下载 / 上传 / 跨桶拷贝", "download / upload / cross-bucket copy"),
-		UsageText: T(`oss cp <源> <目标>
+// cpArgs drives cp: file download / upload / cross-bucket copy. CLI-only (no
+// HTTP/MCP hints); transfers do not fit the value-return API model.
+type cpArgs struct {
+	AK        string        `json:"ak,omitempty" desc:"访问密钥 ID / access key id" secret:"true"`
+	SK        string        `json:"sk,omitempty" desc:"访问密钥 / secret key" secret:"true"`
+	Token     string        `json:"token,omitempty" desc:"STS 会话令牌 / session token" secret:"true"`
+	Profile   string        `json:"profile,omitempty" desc:"AWS 共享配置 profile / shared config profile"`
+	Anonymous bool          `json:"anonymous,omitempty" desc:"强制匿名访问 / force anonymous"`
+	Provider  string        `json:"provider,omitempty" desc:"云厂商 / provider"`
+	Endpoint  string        `json:"endpoint,omitempty" desc:"自定义 S3 端点 / custom endpoint"`
+	Region    string        `json:"region,omitempty" desc:"地域 / region"`
+	PathStyle bool          `json:"path-style,omitempty" desc:"路径风格寻址 / path-style addressing"`
+	Bucket    string        `json:"bucket,omitempty" desc:"桶名（配合 provider 使用）/ bucket name"`
+	Proxy     string        `json:"proxy,omitempty" desc:"HTTP(S) 代理 / proxy"`
+	Headers   []string      `json:"headers,omitempty" desc:"附加请求头，Key: Value / extra headers"`
+	Insecure  bool          `json:"insecure,omitempty" desc:"跳过 TLS 校验 / skip TLS verification"`
+	Timeout   time.Duration `json:"timeout,omitempty" desc:"请求超时，如 15s / request timeout"`
 
-cp 负责所有文件传输：下载、上传、跨桶拷贝。查看列表请用 ls。
-远端必须带 scheme: s3:// oss:// cos:// obs:// http(s)://
+	Src          string   `json:"src,omitempty" desc:"源（本地路径或 s3://…/URL）" cli:"positional"`
+	Dst          string   `json:"dst,omitempty" desc:"目标（本地路径或 s3://…/URL）" cli:"positional"`
+	Recursive    bool     `json:"recursive,omitempty" desc:"按前缀/目录递归拷贝 / copy recursively by prefix/directory"`
+	Include      []string `json:"include,omitempty" desc:"glob 包含过滤，可重复 / glob include filter, repeatable"`
+	Exclude      []string `json:"exclude,omitempty" desc:"glob 排除过滤，可重复 / glob exclude filter, repeatable"`
+	SkipExisting bool     `json:"skip-existing,omitempty" desc:"目标已存在则跳过 / skip files that already exist"`
+	Jobs         int      `json:"jobs,omitempty" desc:"并发文件数 / parallel file transfers" default:"16"`
+	Parallel     int      `json:"parallel,omitempty" desc:"单文件分片并发数（multipart）/ parallel parts per file" default:"5"`
+	NoProgress   bool     `json:"no-progress,omitempty" desc:"关闭进度显示 / disable progress output"`
+	Color        string   `json:"color,omitempty" desc:"彩色输出 auto|always|never（仅 CLI）" default:"auto"`
+}
 
-示例:
+func registerCliCp(reg *registry.Registry) error {
+	_, err := spec.Define("cp", cpRun).
+		Summary(T("下载 / 上传 / 跨桶拷贝", "download / upload / cross-bucket copy")).
+		Description(T("cp 负责所有文件传输：下载、上传、跨桶拷贝；查看列表请用 ls。远端需带 scheme（s3:// oss:// cos:// obs:// http(s)://）。",
+			"cp handles all file transfers: download, upload, cross-bucket copy; use ls to view lists. Remote endpoints need a scheme (s3:// oss:// cos:// obs:// http(s)://).")).
+		CLI(spec.CliHints{
+			Usage: "cp <src> <dst>",
+			Fields: apixConnShortcuts(map[string]spec.CliFieldHint{
+				"recursive": {Shorthand: "r"},
+			}),
+			After: T(`示例:
    oss cp s3://bucket/path/file.tar.gz .                    下载单文件
    oss cp s3://bucket/path/file.tar.gz -                    下载到 stdout
    oss cp -r s3://bucket/logs/ ./logs --include "*.gz"      按条件批量下载
@@ -54,18 +75,8 @@ cp 负责所有文件传输：下载、上传、跨桶拷贝。查看列表请�
 
 目录结构说明:
    -r 递归下载时按 key 中的 / 逐级创建本地目录；源以 / 结尾时，
-   其内容直接放入目标目录（如 s3://b/logs/ → ./logs/<日志文件>）。
-
-参数分类:
-   范围: -r/--recursive  --include  --exclude  --skip-existing
-   性能: --jobs（并发文件数）  --parallel（单文件分片数）
-   输出: --no-progress`,
-			`oss cp <src> <dst>
-
-cp handles all file transfers: download, upload, cross-bucket copy. Use ls to view lists.
-Remote endpoints need a scheme: s3:// oss:// cos:// obs:// http(s)://
-
-EXAMPLES:
+   其内容直接放入目标目录（如 s3://b/logs/ → ./logs/<日志文件>）。`,
+				`EXAMPLES:
    oss cp s3://bucket/path/file.tar.gz .                    download one file
    oss cp s3://bucket/path/file.tar.gz -                    download to stdout
    oss cp -r s3://bucket/logs/ ./logs --include "*.gz"      filtered batch download
@@ -77,33 +88,47 @@ EXAMPLES:
 DIRECTORY LAYOUT:
    With -r, slashes in keys become local directories. When the source ends
    with /, its contents are placed directly into the destination
-   (e.g. s3://b/logs/ -> ./logs/<files>).
-
-Flag groups:
-   scope: -r/--recursive  --include  --exclude  --skip-existing
-   perf:  --jobs (parallel files)  --parallel (parts per file)
-   output: --no-progress`),
-		Flags:  flags,
-		Action: runCP,
-	}
+   (e.g. s3://b/logs/ -> ./logs/<files>).`),
+		}).
+		Register(reg)
+	return err
 }
 
-func runCP(ctx context.Context, c *cli.Command) error {
-	args := c.Args().Slice()
-	if len(args) != 2 {
-		return errors.New(T("用法: oss cp <源> <目标>", "usage: oss cp <src> <dst>"))
+func cpRun(ctx context.Context, in *cpArgs) (int, error) {
+	o := connOptsFrom(in.AK, in.SK, in.Token, in.Profile, in.Provider, in.Endpoint, in.Region,
+		in.Proxy, in.Bucket, in.Anonymous, in.PathStyle, in.Insecure, in.Headers, in.Timeout)
+	opts := cpOpts{
+		recursive: in.Recursive, include: in.Include, exclude: in.Exclude,
+		skipExisting: in.SkipExisting, jobs: in.Jobs, parallel: in.Parallel,
+		noProgress: in.NoProgress,
 	}
-	src, dst := args[0], args[1]
+	if err := runCP(ctx, o, opts, in.Src, in.Dst); err != nil {
+		return 1, err
+	}
+	return 0, nil
+}
+
+// cpOpts carries the CLI-only transfer switches (flag-independent shape).
+type cpOpts struct {
+	recursive    bool
+	include      []string
+	exclude      []string
+	skipExisting bool
+	jobs         int
+	parallel     int
+	noProgress   bool
+}
+
+func runCP(ctx context.Context, o *s3x.ConnOpts, opt cpOpts, src, dst string) error {
 	srcRemote, dstRemote := s3x.IsRemote(src), s3x.IsRemote(dst)
-	o := connOpts(c)
 
 	switch {
 	case srcRemote && dstRemote:
-		return cpS3toS3(ctx, c, o, src, dst)
+		return cpS3toS3(ctx, o, opt, src, dst)
 	case srcRemote:
-		return cpDownload(ctx, c, o, src, dst)
+		return cpDownload(ctx, o, opt, src, dst)
 	case dstRemote:
-		return cpUpload(ctx, c, o, src, dst)
+		return cpUpload(ctx, o, opt, src, dst)
 	default:
 		return errors.New(T(
 			"源和目标都是本地路径；远端请带 scheme（s3:// oss:// http(s):// 等）",
@@ -124,7 +149,7 @@ func relToPrefix(key, prefix string) string {
 
 // ---------------------------------------------------------------- download
 
-func cpDownload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst string) error {
+func cpDownload(ctx context.Context, o *s3x.ConnOpts, opt cpOpts, src, dst string) error {
 	t, err := s3x.ParseTarget(src, o)
 	if err != nil {
 		return err
@@ -137,27 +162,27 @@ func cpDownload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst s
 		return err
 	}
 
-	if !c.Bool("recursive") {
+	if !opt.recursive {
 		if t.Key == "" {
 			return errors.New(T("需要对象 key；按前缀下载请加 -r", "object key required; add -r to download by prefix"))
 		}
-		return downloadOne(ctx, c, cl, t, dst)
+		return downloadOne(ctx, cl, t, dst, opt.parallel, opt.progressEnabled())
 	}
 
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	filter := newFilter(c.StringSlice("include"), c.StringSlice("exclude"))
-	skipExisting := c.Bool("skip-existing")
-	agg := newAggregate(progressEnabled(c), "↓")
+	filter := newFilter(opt.include, opt.exclude)
+	skipExisting := opt.skipExisting
+	agg := newAggregate(opt.progressEnabled(), "↓")
 	defer agg.Finish()
 
 	dl := manager.NewDownloader(cl.S3, func(d *manager.Downloader) {
-		d.Concurrency = max(1, c.Int("parallel"))
+		d.Concurrency = max(1, opt.parallel)
 	})
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(1, c.Int("jobs")))
+	g.SetLimit(max(1, opt.jobs))
 
 	prefix := t.Key
 	token := t.List.ContinuationToken
@@ -237,9 +262,9 @@ func cpDownload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst s
 	return nil
 }
 
-func downloadOne(ctx context.Context, c *cli.Command, cl *s3x.Client, t *s3x.Target, dst string) error {
+func downloadOne(ctx context.Context, cl *s3x.Client, t *s3x.Target, dst string, parallel int, progress bool) error {
 	dl := manager.NewDownloader(cl.S3, func(d *manager.Downloader) {
-		d.Concurrency = max(1, c.Int("parallel"))
+		d.Concurrency = max(1, parallel)
 	})
 	in := &s3.GetObjectInput{Bucket: aws.String(t.Bucket), Key: aws.String(t.Key)}
 
@@ -268,7 +293,7 @@ func downloadOne(ctx context.Context, c *cli.Command, cl *s3x.Client, t *s3x.Tar
 	var pw *progressWriter
 	if head, err := cl.S3.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: in.Bucket, Key: in.Key,
-	}); err == nil && head.ContentLength != nil && *head.ContentLength > 0 && progressEnabled(c) {
+	}); err == nil && head.ContentLength != nil && *head.ContentLength > 0 && progress {
 		pw = &progressWriter{bar: newBar(*head.ContentLength, "↓ "+path.Base(t.Key))}
 	}
 
@@ -301,7 +326,7 @@ func downloadOne(ctx context.Context, c *cli.Command, cl *s3x.Client, t *s3x.Tar
 
 // ------------------------------------------------------------------ upload
 
-func cpUpload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst string) error {
+func cpUpload(ctx context.Context, o *s3x.ConnOpts, opt cpOpts, src, dst string) error {
 	t, err := s3x.ParseTarget(dst, o)
 	if err != nil {
 		return err
@@ -314,7 +339,7 @@ func cpUpload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 		return err
 	}
 	up := manager.NewUploader(cl.S3, func(u *manager.Uploader) {
-		u.Concurrency = max(1, c.Int("parallel"))
+		u.Concurrency = max(1, opt.parallel)
 	})
 
 	fi, err := os.Stat(src)
@@ -322,7 +347,7 @@ func cpUpload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 		return err
 	}
 
-	if !c.Bool("recursive") {
+	if !opt.recursive {
 		if fi.IsDir() {
 			return errors.New(T("源是目录；请加 -r", "source is a directory; add -r"))
 		}
@@ -330,19 +355,19 @@ func cpUpload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 		if key == "" || strings.HasSuffix(key, "/") {
 			key += filepath.Base(src)
 		}
-		return uploadOne(ctx, c, up, src, t.Bucket, key)
+		return uploadOne(ctx, up, src, t.Bucket, key, opt.progressEnabled())
 	}
 	if !fi.IsDir() {
 		return errors.New(T("-r 需要目录作为源", "-r requires a directory source"))
 	}
 
 	base := strings.TrimSuffix(t.Key, "/")
-	filter := newFilter(c.StringSlice("include"), c.StringSlice("exclude"))
-	agg := newAggregate(progressEnabled(c), "↑")
+	filter := newFilter(opt.include, opt.exclude)
+	agg := newAggregate(opt.progressEnabled(), "↑")
 	defer agg.Finish()
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(1, c.Int("jobs")))
+	g.SetLimit(max(1, opt.jobs))
 
 	err = filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -376,7 +401,7 @@ func cpUpload(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 	return apiErr(g.Wait(), cl.Anonymous)
 }
 
-func uploadOne(ctx context.Context, c *cli.Command, up *manager.Uploader, src, bucket, key string) error {
+func uploadOne(ctx context.Context, up *manager.Uploader, src, bucket, key string, progress bool) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -388,7 +413,7 @@ func uploadOne(ctx context.Context, c *cli.Command, up *manager.Uploader, src, b
 	}
 
 	var body io.Reader = f
-	if progressEnabled(c) && fi.Size() > 0 {
+	if progress && fi.Size() > 0 {
 		bar := newBar(fi.Size(), "↑ "+filepath.Base(src))
 		body = io.TeeReader(f, bar)
 		defer bar.Finish()
@@ -428,7 +453,7 @@ func putFile(ctx context.Context, up *manager.Uploader, file, bucket, key string
 
 // ------------------------------------------------------- server-side copy
 
-func cpS3toS3(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst string) error {
+func cpS3toS3(ctx context.Context, o *s3x.ConnOpts, opt cpOpts, src, dst string) error {
 	ts, err := s3x.ParseTarget(src, o)
 	if err != nil {
 		return err
@@ -470,7 +495,7 @@ func cpS3toS3(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 		return nil
 	}
 
-	if !c.Bool("recursive") {
+	if !opt.recursive {
 		if ts.Key == "" {
 			return errors.New(T("需要对象 key；按前缀拷贝请加 -r", "object key required; add -r to copy by prefix"))
 		}
@@ -486,10 +511,10 @@ func cpS3toS3(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 		return nil
 	}
 
-	agg := newAggregate(progressEnabled(c), "⇄")
+	agg := newAggregate(opt.progressEnabled(), "⇄")
 	defer agg.Finish()
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(1, c.Int("jobs")))
+	g.SetLimit(max(1, opt.jobs))
 
 	prefix := ts.Key
 	base := strings.TrimSuffix(td.Key, "/")
@@ -539,3 +564,7 @@ func cpS3toS3(ctx context.Context, c *cli.Command, o *s3x.ConnOpts, src, dst str
 	}
 	return apiErr(g.Wait(), cl.Anonymous)
 }
+
+// progressEnabled reports whether progress output is wanted: not disabled by
+// --no-progress and stderr is a TTY.
+func (o cpOpts) progressEnabled() bool { return !o.noProgress && stderrColor() }

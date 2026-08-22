@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/urfave/cli/v3"
 	"github.com/xuri/excelize/v2"
 	"gopkg.in/yaml.v3"
 
@@ -45,8 +44,9 @@ func toExportRows(entries []cachedEntry) []exportRow {
 
 // runExport collects every entry matching the filters (full listing, no
 // display limit) and writes it to path in a format chosen by its extension:
-// .txt .csv .xlsx .yaml/.yml .md
-func runExport(ctx context.Context, c *cli.Command, cl *s3x.Client, t *s3x.Target, path string) error {
+// .txt .csv .xlsx .yaml/.yml .md. useCache selects whether the listing cache
+// is read and warmed.
+func runExport(ctx context.Context, cl *s3x.Client, t *s3x.Target, p listParams, ef entryFilter, path string, useCache bool) error {
 	format := exportFormat(path)
 	if format == "" {
 		return fmt.Errorf(T(
@@ -54,11 +54,7 @@ func runExport(ctx context.Context, c *cli.Command, cl *s3x.Client, t *s3x.Targe
 			"unsupported export format for %q (want .txt .csv .xlsx .yaml .md)"), path)
 	}
 
-	p := resolveListParams(c, t)
-	ef := newEntryFilter(c, p)
-
 	var entries []cachedEntry
-	useCache := !c.Bool("no-cache") && !c.Bool("reset")
 	fromCache, err := walkEntries(ctx, cl, t, p, ef, useCache, func(e cachedEntry) (bool, error) {
 		entries = append(entries, e)
 		return true, nil
@@ -67,7 +63,7 @@ func runExport(ctx context.Context, c *cli.Command, cl *s3x.Client, t *s3x.Targe
 		return apiErr(err, cl.Anonymous)
 	}
 	// Warm the cache after a fresh full fetch so subsequent runs are instant.
-	if !fromCache && !c.Bool("no-cache") {
+	if !fromCache && useCache {
 		saveCompleteSnapshot(cl, t, p.prefix, p.delimStr, p.startAfter, entries)
 	}
 	rows := toExportRows(entries)

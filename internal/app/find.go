@@ -22,7 +22,6 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/bytedance/sonic"
 	"github.com/mattn/go-isatty"
-	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ejfkdev/oss/internal/s3x"
@@ -55,119 +54,10 @@ type findResult struct {
 	Targeted bool `json:"-"`
 }
 
-func findCmd() *cli.Command {
-	flags := append([]cli.Flag{
-		&cli.IntFlag{Name: "jobs", Value: 0, Usage: T("并发探测数（默认全部并发）", "concurrent probes (default: all at once)")},
-		&cli.BoolFlag{Name: "cn", Usage: T("只探测中国大陆+港台地域（默认行为）", "probe only mainland-China + HK/TW regions (the default)")},
-		&cli.BoolFlag{Name: "global", Usage: T("探测全部地域（含海外）", "probe all regions (including overseas)")},
-		&cli.BoolFlag{Name: "listable", Aliases: []string{"l"}, Usage: T("切换为「发现可匿名列目录的桶」模式：只输出可匿名列目录的命中（默认模式输出所有存储命中）", "switch to the 'anonymously listable' mode: only print anonymously listable hits (the default mode prints every storage hit)")},
-		&cli.BoolFlag{Name: "json", Aliases: []string{"j"}, Usage: T("NDJSON 输出（每个探测一行 + 汇总行）", "NDJSON output (one line per probe + a summary line)")},
-		&cli.StringFlag{Name: "export", Usage: T("导出结果到文件，格式按扩展名 .txt .csv .xlsx .yaml .md；含 listable_url 字段存可匿名列桶的完整 URL", "export results to a file, format by extension .txt .csv .xlsx .yaml .md; includes a listable_url field holding full URLs of anonymously listable buckets")},
-	}, connFlags()...)
-	return &cli.Command{
-		Name:    "find",
-		Aliases: []string{"which"},
-		Usage:   T("查找桶存在于哪些云存储，并识别能否匿名列目录", "find which cloud storage hosts a bucket and whether anonymous listing is allowed"),
-		UsageText: T(`oss find <桶名|URL> [...]  或  cat list.txt | oss find
-
-支持批量：命令行给多个参数，和/或从 stdin 一行一个读取（可混用）。
-每个输入可以是：
-   - 桶名（如 mybucket）→ 并发探测所有已知云厂商的常用区域
-   - 完整桶 URL/路径（如 https://mybucket.s3.us-east-1.amazonaws.com/prefix
-     或 s3://mybucket/key）→ 只探测该端点（更精确）
-
-探测方式：向桶发 ListObjects 请求，一次请求同时判断存在性 + 能否列目录。
-默认匿名探测；配置了凭证（--ak/--sk，STS 加 --token；或 OSS_*/AWS_* 环境变量、
---profile，与 ls/cp 相同）时自动改为 SigV4 签名探测，可验证非匿名桶：
-   HTTP 200        → 存在且可列目录（匿名模式=可匿名列，亮绿★；签名模式=凭证可列）
-   HTTP 3xx        → 存在（重定向）
-   HTTP 401/403    → 匿名模式：存在但私有；签名模式：存在但拒绝访问
-                     （凭证本身被拒，如 InvalidAccessKeyId，则判为无法判断）
-   HTTP 404/域名不存在 → 不存在
-   超时/其它状态码   → 无法判断
-
-示例:
-   oss find mybucket                       查找单个桶名（命中即逐行流式打印）
-   oss find bucket-a bucket-b bucket-c     批量（命令行多个）
-   cat buckets.txt | oss find              批量（stdin 一行一个）
-   oss find https://mybucket.s3.us-east-1.amazonaws.com/   完整 URL
-   oss find mybucket --listable            只列出可匿名列目录的桶
-   oss find mybucket -j                    NDJSON 输出
-   oss find bucket-a bucket-b --export r.csv   导出 CSV（含 listable_url）
-   oss find mybucket --provider aliyun --ak LTAI... --sk ...   用凭证验证阿里云上的私有桶
-   OSS_ACCESS_KEY_ID=... OSS_SECRET_ACCESS_KEY=... oss find mybucket --provider tencent
-
-说明:
-   - 默认只探测中国大陆+港台地域（--cn 显式指定同效）；--global 探测全部地域（含海外）；
-     --region 可只探测指定区域。未找到不代表绝对不存在，可用 --region 或 --global 重试
-   - 两种模式：默认「发现桶存储」——存在即命中（含私有）；--listable「发现可匿名
-     列目录的桶」——只输出可匿名列目录的命中。两种模式都是只打印命中的结果，
-     发现一个命中就立即流式输出一行（含完整访问 URL），未命中的探测不输出
-   - 腾讯云桶名需含 APPID 后缀（如 mybucket-1250000000）
-   - 不支持七牛：匿名访问一律返回 400，无法判断存在性；B2 恒返回 403、R2 需账号 ID，
-     也都不在探测范围
-   - 默认匿名探测，不发送任何凭证；配置凭证后自动切换为签名探测——建议同时用
-     --provider 限定到凭证所属厂商（签名请求发给其它厂商只会被拒）；
-     --anonymous 可强制匿名探测`,
-			`oss find <bucket|URL> [...]  or  cat list.txt | oss find
-
-Batch: give multiple arguments, and/or pipe one entry per line via stdin
-(both can be combined). Each input can be:
-   - a bucket name (e.g. mybucket) -> probe all known providers' regions
-   - a full bucket URL/path (e.g. https://mybucket.s3.us-east-1.amazonaws.com/prefix
-     or s3://mybucket/key) -> probe only that endpoint (more precise)
-
-Probing: one ListObjects request per bucket reveals both existence and
-listability. Probes are anonymous by default; when credentials are configured
-(--ak/--sk, plus --token for STS; or OSS_*/AWS_* env vars, --profile — same
-as ls/cp) they switch to SigV4-signed probes, which can verify non-anonymous
-buckets:
-   HTTP 200        -> exists AND listable (anonymous mode: anonymously listable,
-                      bright green; signed mode: listable with the credentials)
-   HTTP 3xx        -> exists (redirect)
-   HTTP 401/403    -> anonymous mode: exists but private; signed mode: exists
-                      but denied (credentials themselves rejected, e.g.
-                      InvalidAccessKeyId, is treated as inconclusive)
-   HTTP 404 / no such host -> not found
-   timeout / other status  -> inconclusive
-
-EXAMPLES:
-   oss find mybucket                       find a single bucket name (hits stream as found)
-   oss find bucket-a bucket-b bucket-c     batch (multiple arguments)
-   cat buckets.txt | oss find              batch (stdin, one per line)
-   oss find https://mybucket.s3.us-east-1.amazonaws.com/   full URL
-   oss find mybucket --listable            list only anonymously listable buckets
-   oss find mybucket -j                    NDJSON output
-   oss find bucket-a bucket-b --export r.csv   export CSV (with listable_url)
-   oss find mybucket --provider aliyun --ak LTAI... --sk ...   verify a private Aliyun bucket with credentials
-   OSS_ACCESS_KEY_ID=... OSS_SECRET_ACCESS_KEY=... oss find mybucket --provider tencent
-
-NOTES:
-   - By default only mainland-China + HK/TW regions are probed (--cn is the
-     same); --global probes all regions (incl. overseas); --region probes a
-     single region. "not found" is not a guarantee — retry with --region/--global
-   - Two modes: the default "find bucket storage" mode treats any existing
-     bucket as a hit (private included); --listable switches to the "find
-     anonymously listable buckets" mode, printing only listable hits. Both
-     modes print only matches, streamed one line per hit (with the full access
-     URL); probes that find nothing are not printed at all
-   - Tencent COS bucket names include the APPID suffix (e.g. mybucket-1250000000)
-   - Qiniu is not supported (anonymous requests always return 400, so existence
-     cannot be determined); B2 always returns 403 and R2 needs an account ID,
-     so none of these are probed
-   - Probes are anonymous by default and send no credentials; when credentials
-     are configured they switch to signed probing — combine with --provider to
-     restrict the scan to the provider the credentials belong to (signed
-     requests sent to other providers are simply rejected); --anonymous forces
-     anonymous probing`),
-		Flags:  flags,
-		Action: runFind,
-	}
-}
-
-// collectFindInputs gathers inputs from CLI args and stdin (one per line).
-func collectFindInputs(c *cli.Command) []string {
-	inputs := append([]string{}, c.Args().Slice()...)
+// collectFindInputs gathers inputs from positional args and stdin (one per
+// line), deduped.
+func collectFindInputs(args []string) []string {
+	inputs := append([]string{}, args...)
 	if !isatty.IsTerminal(os.Stdin.Fd()) {
 		sc := bufio.NewScanner(os.Stdin)
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -597,26 +487,17 @@ func findTargets(ctx context.Context, o *s3x.ConnOpts, inputs []string, opt Find
 	return report, nil
 }
 
-func runFind(ctx context.Context, c *cli.Command) error {
-	o := connOpts(c)
-
-	inputs := collectFindInputs(c)
+// findCLI is the command-line behavior of find: streaming hits, export and
+// NDJSON — the same UX as before the CLI migration.
+func findCLI(ctx context.Context, rawInputs []string, o *s3x.ConnOpts, opt FindOptions, jsonOut bool, exportPath string) error {
+	inputs := collectFindInputs(rawInputs)
 	if len(inputs) == 0 {
 		return errors.New(T(
 			"用法: oss find <桶名|URL> [...]（或 cat list.txt | oss find）",
 			"usage: oss find <bucket|URL> [...] (or: cat list.txt | oss find)"))
 	}
-	opt := FindOptions{
-		Jobs:     c.Int("jobs"),
-		Region:   c.String("region"),
-		Global:   c.Bool("global"),
-		Cn:       c.Bool("cn"),
-		Listable: c.Bool("listable"),
-	}
 
 	// ---- Output wiring: human mode streams hits as they resolve ----
-	jsonOut := c.Bool("json")
-	exportPath := c.String("export")
 	human := !jsonOut && exportPath == ""
 	multi := len(inputs) > 1
 	var (

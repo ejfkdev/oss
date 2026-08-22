@@ -11,9 +11,9 @@ require (
 	github.com/aws/smithy-go v1.27.6
 	github.com/bytedance/sonic v1.15.2
 	github.com/dustin/go-humanize v1.0.1
+	github.com/ejfkdev/xyz-go v0.2.4
 	github.com/mattn/go-isatty v0.0.24
 	github.com/schollz/progressbar/v3 v3.19.1
-	github.com/urfave/cli/v3 v3.10.1
 	github.com/xuri/excelize/v2 v2.11.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -37,7 +37,6 @@ require (
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/ejfkdev/xyz-go v0.2.4 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect

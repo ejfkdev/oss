@@ -7,7 +7,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/urfave/cli/v3"
 
 	"github.com/ejfkdev/oss/internal/s3x"
 )
@@ -39,30 +38,6 @@ type listFlags struct {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
-
-// listFlagsFromCmd maps the ls CLI flags onto listFlags.
-func listFlagsFromCmd(c *cli.Command) listFlags {
-	f := listFlags{
-		recursive:  c.Bool("recursive"),
-		prefix:     c.String("prefix"),
-		startAfter: c.String("start-after"),
-		dirsOnly:   c.Bool("dirs"),
-		filesOnly:  c.Bool("files"),
-		include:    c.StringSlice("include"),
-		exclude:    c.StringSlice("exclude"),
-	}
-	if c.IsSet("delimiter") {
-		f.delimiter = aws.String(c.String("delimiter"))
-	}
-	if c.IsSet("page-size") && c.Int64("page-size") > 0 {
-		f.pageSize = int64Ptr(c.Int64("page-size"))
-	}
-	return f
-}
-
-func resolveListParams(c *cli.Command, t *s3x.Target) listParams {
-	return resolveListParamsF(listFlagsFromCmd(c), t)
-}
 
 func resolveListParamsF(f listFlags, t *s3x.Target) listParams {
 	// Delimiter resolution: recursive > explicit delimiter > URL ?delimiter= > "/".
@@ -143,10 +118,6 @@ type entryFilter struct {
 	glob      *filter
 	prefix    string
 	delim     *string
-}
-
-func newEntryFilter(c *cli.Command, p listParams) entryFilter {
-	return newEntryFilterF(listFlagsFromCmd(c), p)
 }
 
 func newEntryFilterF(f listFlags, p listParams) entryFilter {

@@ -266,12 +266,12 @@ oss presign s3://b/key --method PUT         # 上传链接
 
 ```bash
 oss find mybucket                       # 查找单个桶名
-oss find bucket-a bucket-b bucket-c     # 批量（命令行多个）
+oss find bucket-a --inputs bucket-b --inputs bucket-c   # 批量（--inputs 可重复；或 stdin 每行一个）
 cat buckets.txt | oss find              # 批量（stdin 一行一个）
 oss find https://mybucket.s3.us-east-1.amazonaws.com/   # 完整 URL
 oss find mybucket --listable            # 只列出可匿名列目录的桶
 oss find mybucket --region cn-beijing   # 只探测指定区域
-oss find bucket-a bucket-b --export r.csv   # 导出 CSV
+oss find bucket-a --inputs bucket-b --export r.csv   # 导出 CSV
 oss find mybucket --provider aliyun --ak LTAI... --sk ...   # 用凭证验证私有桶
 ```
 
@@ -330,7 +330,7 @@ oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
 
 | 路由 | 用法 |
 |---|---|
-| `GET /ls` | 列举：`target` 桶/前缀目标（留空列桶），`prefix`、`delimiter`（默认 `/`，空串递归平铺）、`recursive`、`dirs`、`files`、`include`、`exclude` 过滤，`limit`（默认 1000）+ `next_token` 分页，`all=true` 全量 |
+| `GET /ls` | 列举：`target` 桶/前缀目标（留空列桶），`prefix`、`delimiter`（默认 `/`，空串递归平铺）、`recursive`、`dirs`、`files`、`include`、`exclude` 过滤，`limit`（默认 1000）+ `next-token` 分页，`all=true` 全量 |
 | `GET /cat` | 读取对象内容：**原始字节流**（非 JSON），`target` + `range`（如 `0-1023`，与 CLI `--range` 同义）；也接受标准 `Range` 请求头；响应带 `Content-Type`/`Content-Length`，范围读取时 `206` + `Content-Range` |
 | `GET /stat` | `target` 桶连接信息（kind=bucket）或对象元数据（kind=object：size/modified/etag/content_type/storage_class/metadata） |
 | `GET /presign` | `target` + `method GET\|PUT` + `expires`（如 `15m`）生成预签名 URL；匿名返回 401 |
@@ -342,7 +342,7 @@ oss serve --addr :8443 --tls-cert c.pem --tls-key k.pem --bearer tok1,tok2
 # 匿名列举公共桶，翻页直到 truncated=false（每页 500 条）
 curl -s '127.0.0.1:8080/ls?target=https://noaa-nwm-pds.s3.amazonaws.com/&limit=2'
 # {"target":"...","entries":[{"type":"prefix","key":"nwm.20250101/"},...],
-#  "shown":2,"next_token":"...","truncated":true}
+#  "shown":2,"next-token":"...","truncated":true}
 
 curl -s '127.0.0.1:8080/stat?target=https://noaa-nwm-pds.s3.amazonaws.com/index.html'
 # {"kind":"object",...,"size":31608,"modified":"2023-04-05T16:28:08Z","etag":"...","content_type":"text/html"}
@@ -364,7 +364,7 @@ curl -s -H 'X-Oss-Ak: LTAI...' -H 'X-Oss-Sk: ...' \
 ```
 
 会话型（STS 凭证）再加 `X-Oss-Token`。所有公共连接参数（`provider`/`endpoint`/`region`/
-`path_style`/`proxy`/`headers`/`insecure`/`timeout`）都可作为同名 query 参数或 headers 传入。
+`path-style`/`proxy`/`headers`/`insecure`/`timeout`）都可作为同名 query 参数或 headers 传入。
 
 **错误**：统一 `{"error":"..."}`，状态码映射按同一分类：参数/校验类 400、凭证无效或未提供
 401、权限不足 403、桶/对象不存在 404、上游不可达 503，展示异常 500。
@@ -494,6 +494,7 @@ MCP 工具调用约定：连接类与目标类参数和 HTTP 版完全一致（�
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
+| --inputs <V> | 可重复 | 追加探测输入（多输入：位置参数给第一个，其余用 --inputs 或 stdin） |
 | `--cn` | 默认行为 | 只探测中国大陆+港台地域 |
 | `--global` | | 探测全部地域（含海外） |
 | `--listable, -l` | | 只输出可匿名列目录的桶（命中即流式打印；`-j`/`--export` 也跟随过滤） |

@@ -15,26 +15,31 @@ import (
 	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/ejfkdev/xyz-go/httpapi"
 	"github.com/ejfkdev/xyz-go/mcp"
-	"github.com/urfave/cli/v3"
+	"github.com/ejfkdev/xyz-go/registry"
+	"github.com/ejfkdev/xyz-go/spec"
 )
 
-// serveCmd starts the HTTP service exposing the xyz-go registry: REST routes
-// (ls/stat/presign/find), /openapi.json, /healthz and MCP streamable HTTP
-// under /mcp — the same model as xyz-go's own serve mode.
-func serveCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "serve",
-		Usage: T("启动 HTTP 服务：REST API + OpenAPI + MCP", "start the HTTP service: REST API + OpenAPI + MCP"),
-		UsageText: T(`oss serve [--addr :8080]
+// serveArgs starts the HTTP service exposing the xyz-go registry: REST routes
+// (ls/stat/cat/presign/find), /openapi.json, /healthz and MCP streamable HTTP
+// under /mcp. CLI-only (long-running; no HTTP/MCP hints).
+type serveArgs struct {
+	Addr    string        `json:"addr,omitempty" desc:"监听地址 / listen address" default:":8080"`
+	Bearer  []string      `json:"bearer,omitempty" desc:"Bearer 令牌（可重复）/ bearer token(s), repeatable"`
+	CORS    []string      `json:"cors,omitempty" desc:"CORS 允许来源（可重复；* 允许任意）/ CORS origins"`
+	Timeout time.Duration `json:"timeout,omitempty" desc:"读写/空闲超时 / read/write/idle timeout"`
+	TLSCert string        `json:"tls-cert,omitempty" desc:"TLS 证书文件 / TLS cert file"`
+	TLSKey  string        `json:"tls-key,omitempty" desc:"TLS 私钥文件 / TLS key file"`
+	Color   string        `json:"color,omitempty" desc:"彩色输出 auto|always|never（仅 CLI）" default:"auto"`
+}
 
-在同一端口提供:
-   REST 路由      GET /ls /stat /presign /find（凭证走 X-Oss-Ak/X-Oss-Sk/X-Oss-Token 请求头）
-   RAW 字节流     GET /cat（对象内容原样输出，支持 range 范围读取）
-   OpenAPI 文档   GET /openapi.json
-   健康检查       GET /healthz
-   MCP            /mcp（MCP streamable HTTP 工具端点，工具含 cat）
-
-示例:
+func registerCliServe(reg *registry.Registry) error {
+	_, err := spec.Define("serve", apixServe).
+		Summary(T("启动 HTTP 服务：REST + OpenAPI + /mcp", "start the HTTP service: REST + OpenAPI + /mcp")).
+		Description(T("一个端口提供 REST 路由、/openapi.json、/healthz 与 /mcp（MCP streamable HTTP）。默认不鉴权。",
+			"One port serves the REST routes, /openapi.json, /healthz and /mcp (MCP streamable HTTP). No auth by default.")).
+		CLI(spec.CliHints{
+			Usage: "serve [--addr :8080]",
+			After: T(`示例:
    oss serve --addr 127.0.0.1:8080
    curl -s '127.0.0.1:8080/ls?target=https://files.example.com/bucket/&prefix=logs/'
    curl -s '127.0.0.1:8080/cat?target=s3://mybucket/app.log&range=0-1023'
@@ -44,16 +49,7 @@ func serveCmd() *cli.Command {
    - 默认不鉴权——请勿直接暴露公网；--bearer 开启 Bearer 令牌校验
    - 凭证每次请求通过 header 传入（X-Oss-Ak/X-Oss-Sk/X-Oss-Token/X-Oss-Profile），
      未传时回落服务端环境变量（OSS_* / AWS_*）与 ~/.aws 共享配置`,
-			`oss serve [--addr :8080]
-
-Serves on one port:
-   REST routes    GET /ls /stat /presign /find (credentials via X-Oss-Ak/X-Oss-Sk/X-Oss-Token headers)
-   RAW byte stream GET /cat (verbatim object content, range reads supported)
-   OpenAPI doc    GET /openapi.json
-   health probe   GET /healthz
-   MCP            /mcp (MCP streamable HTTP tool endpoint; tools include cat)
-
-EXAMPLES:
+				`EXAMPLES:
    oss serve --addr 127.0.0.1:8080
    curl -s '127.0.0.1:8080/ls?target=https://files.example.com/bucket/&prefix=logs/'
    curl -s '127.0.0.1:8080/cat?target=s3://mybucket/app.log&range=0-1023'
@@ -62,18 +58,95 @@ EXAMPLES:
 NOTES:
    - No auth by default — do not expose it to the internet; --bearer enables
      Bearer-token verification
-   - Credentials are passed per request via headers (X-Oss-Ak/X-Oss-Sk/X-Oss-Token),
-     or provided globally by the server process environment (OSS_* / AWS_*)`),
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "addr", Value: ":8080", Usage: T("监听地址", "listen address")},
-			&cli.StringSliceFlag{Name: "bearer", Usage: T("Bearer 令牌（逗号分隔，可多次；空=不鉴权）", "bearer token(s), comma-separated; empty = no auth")},
-			&cli.StringSliceFlag{Name: "cors", Usage: T("CORS 允许来源（逗号分隔；* 允许任意）", "CORS allowed origins; * = any")},
-			&cli.DurationFlag{Name: "timeout", Usage: T("读写/空闲超时（0=不限，仍保留 10s 请求头超时）", "read/write/idle timeout (0 = none, keeps the 10s header timeout)")},
-			&cli.StringFlag{Name: "tls-cert", Usage: T("TLS 证书文件（与 --tls-key 同时给出启用 HTTPS）", "TLS cert file")},
-			&cli.StringFlag{Name: "tls-key", Usage: T("TLS 私钥文件", "TLS key file")},
-		},
-		Action: runServe,
+   - Credentials are passed per request via headers (X-Oss-Ak/X-Oss-Sk/X-Oss-Token/X-Oss-Profile),
+     falling back to the server environment (OSS_* / AWS_*) and ~/.aws`),
+		}).
+		Register(reg)
+	return err
+}
+
+func apixServe(ctx context.Context, in *serveArgs) (int, error) {
+	bearers := in.Bearer
+	origins := in.CORS
+	handler, mcpHandler, err := serveHandlers(bearers, origins)
+	if err != nil {
+		return 2, err
 	}
+	outer := http.NewServeMux()
+	outer.Handle("GET /cat", rawCatHandler())
+	outer.Handle("/mcp", mcpHandler)
+	outer.Handle("/", handler)
+	// Middleware chain (outermost first): CORS preflight (before auth, browser
+	// preflights carry no credentials) -> Bearer -> Gzip -> routes.
+	root := httpapi.CORS(origins, httpapi.Bearer(bearers, httpapi.Gzip(outer)))
+
+	if (in.TLSCert == "") != (in.TLSKey == "") {
+		return 2, errors.New(T("TLS 需要同时给定 --tls-cert 与 --tls-key", "TLS requires both --tls-cert and --tls-key"))
+	}
+	scheme := "http"
+	if in.TLSCert != "" {
+		scheme = "https"
+	}
+	addr := in.Addr
+	if addr == "" {
+		addr = ":8080"
+	}
+
+	srv := &http.Server{Addr: addr, Handler: root, ReadHeaderTimeout: 10 * time.Second}
+	srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	if in.Timeout > 0 {
+		srv.ReadTimeout, srv.WriteTimeout, srv.IdleTimeout = in.Timeout, in.Timeout, in.Timeout
+	}
+
+	fmt.Fprintf(os.Stdout, "%s %s://%s（REST + /openapi.json + /mcp）\n",
+		cGreen(T("服务已启动", "listening")), scheme, addr)
+	if len(bearers) == 0 {
+		fmt.Fprintln(os.Stderr, eYellow(T(
+			"⚠ 未设置 --bearer，服务不鉴权；如对外暴露请务必配置令牌",
+			"⚠ no --bearer set, the service is unauthenticated; set tokens before exposing it")))
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		if in.TLSCert != "" {
+			errc <- srv.ListenAndServeTLS(in.TLSCert, in.TLSKey)
+		} else {
+			errc <- srv.ListenAndServe()
+		}
+	}()
+	select {
+	case serveErr := <-errc:
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			return 1, serveErr
+		}
+		return 0, nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		fmt.Fprintln(os.Stderr, cGreen(T("已优雅关停", "shut down gracefully")))
+		return 0, nil
+	}
+}
+
+// serveHandlers builds the REST handler and the MCP streamable-HTTP handler
+// sharing the API registry (exported for tests).
+func serveHandlers(bearers, origins []string) (http.Handler, http.Handler, error) {
+	reg, err := BuildAPIRegistry()
+	if err != nil {
+		return nil, nil, err
+	}
+	handler, err := httpapi.Handler(reg)
+	if err != nil {
+		return nil, nil, err
+	}
+	mcpHandler, err := mcp.HTTPHandler(reg, mcp.Options{
+		BearerTokens: bearers, CORSOrigins: origins, Instructions: mcpInstructions,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return handler, mcpHandler, nil
 }
 
 // rawCatHandler streams an object body verbatim — the raw byte stream the
@@ -119,76 +192,5 @@ func rawCatHandler() http.HandlerFunc {
 		}
 		w.WriteHeader(status)
 		_, _ = io.Copy(w, resp.Body)
-	}
-}
-
-func runServe(ctx context.Context, c *cli.Command) error {
-	reg, err := BuildAPIRegistry()
-	if err != nil {
-		return err
-	}
-	handler, err := httpapi.Handler(reg)
-	if err != nil {
-		return err
-	}
-	bearers := c.StringSlice("bearer")
-	origins := c.StringSlice("cors")
-	mcpHandler, err := mcp.HTTPHandler(reg, mcp.Options{
-		BearerTokens: bearers, CORSOrigins: origins, Instructions: mcpInstructions,
-	})
-	if err != nil {
-		return err
-	}
-	outer := http.NewServeMux()
-	outer.Handle("GET /cat", rawCatHandler())
-	outer.Handle("/mcp", mcpHandler)
-	outer.Handle("/", handler)
-	// Middleware chain (outermost first): CORS preflight (before auth, browser
-	// preflights carry no credentials) -> Bearer -> Gzip -> routes.
-	root := httpapi.CORS(origins, httpapi.Bearer(bearers, httpapi.Gzip(outer)))
-
-	tlsCert, tlsKey := c.String("tls-cert"), c.String("tls-key")
-	if (tlsCert == "") != (tlsKey == "") {
-		return errors.New(T("TLS 需要同时给定 --tls-cert 与 --tls-key", "TLS requires both --tls-cert and --tls-key"))
-	}
-	scheme := "http"
-	if tlsCert != "" {
-		scheme = "https"
-	}
-
-	srv := &http.Server{Addr: c.String("addr"), Handler: root, ReadHeaderTimeout: 10 * time.Second}
-	srv.BaseContext = func(net.Listener) context.Context { return ctx }
-	if d := c.Duration("timeout"); d > 0 {
-		srv.ReadTimeout, srv.WriteTimeout, srv.IdleTimeout = d, d, d
-	}
-
-	fmt.Fprintf(os.Stdout, "%s %s://%s（REST + /openapi.json + /mcp）\n",
-		cGreen(T("服务已启动", "listening")), scheme, c.String("addr"))
-	if len(bearers) == 0 {
-		fmt.Fprintln(os.Stderr, eYellow(T(
-			"⚠ 未设置 --bearer，服务不鉴权；如对外暴露请务必配置令牌",
-			"⚠ no --bearer set, the service is unauthenticated; set tokens before exposing it")))
-	}
-
-	errc := make(chan error, 1)
-	go func() {
-		if tlsCert != "" {
-			errc <- srv.ListenAndServeTLS(tlsCert, tlsKey)
-		} else {
-			errc <- srv.ListenAndServe()
-		}
-	}()
-	select {
-	case serveErr := <-errc:
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			return serveErr
-		}
-		return nil
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		fmt.Fprintln(os.Stderr, cGreen(T("已优雅关停", "shut down gracefully")))
-		return nil
 	}
 }
