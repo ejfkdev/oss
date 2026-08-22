@@ -18,9 +18,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"encoding/json"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	"github.com/bytedance/sonic"
 	"github.com/mattn/go-isatty"
 	"golang.org/x/sync/errgroup"
 
@@ -581,7 +581,7 @@ func findCLI(ctx context.Context, rawInputs []string, o *s3x.ConnOpts, opt FindO
 			if opt.Listable && !report.Results[i].Listable {
 				continue
 			}
-			line, _ := sonic.Marshal(&report.Results[i])
+			line, _ := json.Marshal(&report.Results[i])
 			fmt.Println(string(line))
 		}
 		listable := make([]map[string]any, 0, len(report.AnonymousListable))
@@ -591,7 +591,7 @@ func findCLI(ctx context.Context, rawInputs []string, o *s3x.ConnOpts, opt FindO
 				"region": l.Region, "url": l.URL,
 			})
 		}
-		line, _ := sonic.Marshal(map[string]any{
+		line, _ := json.Marshal(map[string]any{
 			"auth":               report.Auth,
 			"inputs":             report.Inputs,
 			"found":              report.Found,

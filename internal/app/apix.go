@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bytedance/sonic"
+	"encoding/json"
 	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/ejfkdev/xyz-go/registry"
 	"github.com/ejfkdev/xyz-go/spec"
@@ -109,7 +109,7 @@ func BuildAPIRegistry() (*registry.Registry, error) {
 func writeAPIError(w http.ResponseWriter, anonymous bool, err error) {
 	status := errs.HTTPStatus(apixClassify(err))
 	msg := apixErr(anonymous, err).Error()
-	line, _ := sonic.Marshal(map[string]any{"error": msg})
+	line, _ := json.Marshal(map[string]any{"error": msg})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(line)

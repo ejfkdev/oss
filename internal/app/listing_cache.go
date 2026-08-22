@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/bytedance/sonic"
 
 	"github.com/ejfkdev/oss/internal/s3x"
 )
@@ -33,8 +33,8 @@ import (
 
 const (
 	listingCacheTTL      = 24 * time.Hour
-	maxCachedEntries     = 50000       // per listing
-	maxListingCacheBytes = 128 << 20   // total cache file cap
+	maxCachedEntries     = 50000     // per listing
+	maxListingCacheBytes = 128 << 20 // total cache file cap
 )
 
 type cachedEntry struct {
@@ -84,7 +84,7 @@ func loadListingCache() listingCache {
 		return listingCache{}
 	}
 	c := listingCache{}
-	if err := sonic.Unmarshal(data, &c); err != nil {
+	if err := json.Unmarshal(data, &c); err != nil {
 		return listingCache{}
 	}
 	now := time.Now()
@@ -101,7 +101,7 @@ func (c listingCache) save() {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
-	data, err := sonic.Marshal(c)
+	data, err := json.Marshal(c)
 	if err != nil {
 		return
 	}

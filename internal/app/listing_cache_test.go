@@ -79,10 +79,10 @@ func TestCacheSaveLoadRoundTrip(t *testing.T) {
 			UpdatedAt: time.Now(),
 		},
 		"fp2": {
-			Token:   "tok",
-			V1:      true,
-			Pending: []cachedEntry{{Key: "p"}},
-			Entries: []cachedEntry{},
+			Token:     "tok",
+			V1:        true,
+			Pending:   []cachedEntry{{Key: "p"}},
+			Entries:   []cachedEntry{},
 			UpdatedAt: time.Now(),
 		},
 	}

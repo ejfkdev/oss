@@ -20,6 +20,7 @@ import (
 
 	"github.com/ejfkdev/xyz-go/cli"
 	errs "github.com/ejfkdev/xyz-go/errors"
+	"github.com/ejfkdev/xyz-go/langx"
 	"github.com/ejfkdev/xyz-go/registry"
 
 	"github.com/ejfkdev/oss/internal/s3x"
@@ -32,6 +33,15 @@ const cliBin = "oss"
 // error prefix) and dispatches args. It returns the process exit code.
 func Run(version string, args []string) int {
 	apiVersion = version
+
+	// xyz-go v0.3.1+ renders its own interface strings (positional-count
+	// errors, help labels, MCP surfaces) through the langx catalog; align it
+	// with the oss language detection so those strings are bilingual too.
+	if chineseEnv {
+		langx.Set(langx.ZhCn, nil)
+	} else {
+		langx.Set(langx.En, nil)
+	}
 
 	reg, err := buildCLIRegistry()
 	if err != nil {

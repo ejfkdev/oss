@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/bytedance/sonic"
 	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/ejfkdev/xyz-go/registry"
 	"github.com/ejfkdev/xyz-go/spec"
@@ -293,7 +293,7 @@ func listBuckets(ctx context.Context, jsonMode bool, cl *s3x.Client) error {
 
 	if jsonMode {
 		for _, b := range out.Buckets {
-			line, _ := sonic.Marshal(map[string]any{
+			line, _ := json.Marshal(map[string]any{
 				"type":          "bucket",
 				"name":          aws.ToString(b.Name),
 				"creation_date": b.CreationDate,
@@ -367,10 +367,10 @@ func listObjects(ctx context.Context, cl *s3x.Client, t *s3x.Target, p listParam
 		}
 		if jsonMode {
 			if e.Dir {
-				line, _ := sonic.Marshal(map[string]any{"type": "prefix", "key": e.Key})
+				line, _ := json.Marshal(map[string]any{"type": "prefix", "key": e.Key})
 				stdout.Write(line)
 			} else {
-				line, _ := sonic.Marshal(map[string]any{
+				line, _ := json.Marshal(map[string]any{
 					"type":          "object",
 					"key":           e.Key,
 					"size":          e.Size,
