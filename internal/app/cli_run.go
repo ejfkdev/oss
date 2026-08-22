@@ -9,6 +9,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"syscall"
 
 	"github.com/ejfkdev/xyz-go/cli"
+	errs "github.com/ejfkdev/xyz-go/errors"
 	"github.com/ejfkdev/xyz-go/registry"
 
 	"github.com/ejfkdev/oss/internal/s3x"
@@ -95,12 +97,22 @@ func cliColorMiddleware(_ context.Context, _ *cli.ExecContext, args map[string]a
 // the handler the same way it reached the old command actions, and the CLI
 // mark lets shared handlers branch between the command line and HTTP/MCP
 // (json:"-" fields are injected under their Go name).
+//
+// Non-coded handler errors are wrapped as internal so runtime failures keep
+// the pre-migration exit code (1); usage errors (unknown flags, positional
+// counts) never reach this middleware and still exit 2, per xyz semantics.
 func cliOutputMiddleware(_ context.Context, ec *cli.ExecContext, args map[string]any, _ func() error) error {
 	args["CLI"] = true
 	if ec.JSON {
 		args["JSON"] = true
 	}
 	_, err := ec.Entry.Invoke(context.Background(), args)
+	if err != nil {
+		var ce *errs.CodedError
+		if !errors.As(err, &ce) {
+			err = errs.WrapMsg(errs.KindInternal, err, err.Error())
+		}
+	}
 	return err
 }
 
