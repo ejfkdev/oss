@@ -133,7 +133,9 @@ func runServe(ctx context.Context, c *cli.Command) error {
 	}
 	bearers := c.StringSlice("bearer")
 	origins := c.StringSlice("cors")
-	mcpHandler, err := mcp.HTTPHandler(reg, mcp.Options{BearerTokens: bearers, CORSOrigins: origins})
+	mcpHandler, err := mcp.HTTPHandler(reg, mcp.Options{
+		BearerTokens: bearers, CORSOrigins: origins, Instructions: mcpInstructions,
+	})
 	if err != nil {
 		return err
 	}

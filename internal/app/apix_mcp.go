@@ -115,7 +115,9 @@ func runMCP(ctx context.Context, c *cli.Command) error {
 		args = append(args, "--json-response")
 	}
 
-	code := mcp.RunContextWithOptions(ctx, reg, args, mcp.Options{Name: "oss", Version: apiVersion})
+	code := mcp.RunContextWithOptions(ctx, reg, args, mcp.Options{
+		Name: "oss", Version: apiVersion, Instructions: mcpInstructions,
+	})
 	if code != 0 {
 		return cli.Exit(T("MCP 服务异常退出", "MCP server exited abnormally"), code)
 	}

@@ -51,6 +51,18 @@ func xyzMCPRead() spec.MCPHints {
 	return spec.MCPHints{Annotations: []string{"read"}}
 }
 
+// mcpInstructions is the usage note shown to MCP clients right after
+// initialization (the "help" of the MCP surface).
+var mcpInstructions = T(`5 个工具：ls 列举、stat 元数据、presign 预签名、find 桶归属探测、cat 读内容。
+目标写 s3://桶/键 或完整 URL；凭证作为工具参数 ak/sk/token（STS 加 token）传入，
+未提供时用服务端环境变量（OSS_* / AWS_*）或 ~/.aws。cat 返回 UTF-8 文本
+(text 字段)或二进制 base64（base64 字段），单次上限 16MiB。`,
+	`Five tools: ls (list), stat (metadata), presign (pre-signed URL),
+find (bucket discovery), cat (read content). Targets are s3://bucket/key or
+full URLs; credentials go in tool arguments ak/sk (plus token for STS),
+falling back to the server environment (OSS_* / AWS_*) or ~/.aws. cat returns
+UTF-8 text (text field) or base64 (base64 field), capped at 16MiB per call.`)
+
 // connOptsFrom folds the inline connection fields of an API args struct into
 // the shared connection options.
 func connOptsFrom(ak, sk, token, profile, provider, endpoint, region, proxy, bucket string,

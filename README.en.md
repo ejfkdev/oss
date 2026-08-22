@@ -432,11 +432,12 @@ Client configuration example (Claude Desktop `claude_desktop_config.json`):
 
 MCP tool-call conventions: connection and target arguments are identical to the
 HTTP API (credentials go in tool arguments `ak`/`sk`/`token`); remote transports
-(http/sse) use `--bearer` tokens. `tools/list` returns the five tools; failed
-`tools/call` responses carry `isError: true` with the same classified message.
-The `cat` tool reads object content: UTF-8 text goes into the `text` field,
-binary into `base64` (one of the two), capped at 16MiB per call — for larger
-objects use HTTP `GET /cat` (raw byte stream) or the CLI `oss cat`.
+(http/sse) use `--bearer` tokens. `tools/list` returns the five tools; **clients
+also receive usage Instructions (for the five tools) right after initialize**;
+failed `tools/call` responses carry `isError: true` with the same classified
+message. The `cat` tool reads object content: UTF-8 text goes into the `text`
+field, binary into `base64` (one of the two), capped at 16MiB per call — for
+larger objects use HTTP `GET /cat` (raw byte stream) or the CLI `oss cat`.
 
 ## Global connection flags
 

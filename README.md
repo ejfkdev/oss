@@ -399,7 +399,8 @@ oss mcp stdio --versions 2024-11-05,2025-06-18   # 限定协议版本
 
 MCP 工具调用约定：连接类与目标类参数和 HTTP 版完全一致（凭证直接作为工具参数
 `ak`/`sk`/`token` 传入）；远程（http/sse）用 `--bearer` 加令牌。`tools/list` 返回
-五个工具；`tools/call` 失败时以 `isError: true` 携带与 HTTP 相同的分类错误消息。
+五个工具；**initialize 之后客户端还会收到 Instructions（五个工具的用法说明）**；
+`tools/call` 失败时以 `isError: true` 携带与 HTTP 相同的分类错误消息。
 `cat` 工具读取对象内容：UTF-8 文本放 `text` 字段、二进制放 `base64` 字段（二选一），
 单次上限 16MiB——更大的对象用 HTTP `GET /cat`（原始字节流）或 CLI `oss cat`。
 

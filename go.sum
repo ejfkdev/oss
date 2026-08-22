@@ -55,6 +55,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/ejfkdev/xyz-go v0.2.2 h1:z+TFWln41ACb4rlcWw0WEXEoH8nkAsZC34CRBwNQWU0=
 github.com/ejfkdev/xyz-go v0.2.2/go.mod h1:ktMdjVu0xB+09jToXHF6vBermWJg4Qc14z9+WAIpZdI=
+github.com/ejfkdev/xyz-go v0.2.4 h1:f2RFZ4gMmpbwfTAdBgpG53mzz1uIXJLnORDHfQUSORk=
+github.com/ejfkdev/xyz-go v0.2.4/go.mod h1:ktMdjVu0xB+09jToXHF6vBermWJg4Qc14z9+WAIpZdI=
 github.com/google/jsonschema-go v0.4.3 h1:/DBOLZTfDow7pe2GmaJNhltueGTtDKICi8V8p+DQPd0=
 github.com/google/jsonschema-go v0.4.3/go.mod h1:r5quNTdLOYEz95Ru18zA0ydNbBuYoo9tgaYcxEYhJVE=
 github.com/klauspost/cpuid/v2 v2.2.11 h1:0OwqZRYI2rFrjS4kvkDnqJkKHdHaRnCm68/DY4OxRzU=
